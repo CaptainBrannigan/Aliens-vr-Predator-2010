@@ -8,12 +8,16 @@
 // timer fallback in case nothing calls an export. The DX9 exe (AvP.exe) never loads dxgi.dll, so this proxy is
 // DX11-only by construction; a DX9 port needs another loader (both exes import dinput8.dll and xinput1_3.dll).
 
+#include "../core/crash_log.h"
 #include "../core/dev_flags.h"
 #include "../core/game.h"
 #include "../core/log.h"
+#include "../hooks/d3d_probe.h"
+#include "../hooks/render_twice_experiment.h"
 #include "../hooks/snapshot.h"
 #include "../hooks/trace_hooks.h"
 #include "../hooks/two_view_experiment.h"
+#include "../hooks/vmt_shadow.h"
 
 #include <MinHook.h>
 #include <windows.h>
@@ -61,11 +65,15 @@ void InitializeMod()
         AVP_LOG(kLog, "MH_Initialize failed: %s", MH_StatusToString(mh));
         return;
     }
+    avp::InstallExitHooks();
 
     const int hooks = avp::InstallTraceHooks();
     AVP_LOG(kLog, "%d trace hooks installed -- see avpvr_trace.log", hooks);
     avp::StartTraceSummaryThread();
     avp::StartSnapshotThread();
+    avp::StartVmtShadow(); // per-object shadow vtables (CEG-safe virtual hooks) -- see avpvr_shadow.log
+    avp::StartD3DProbe();  // draw/viewport/present counts from hooks in d3d11/dxgi -- see avpvr_d3d.log
+    avp::StartRenderTwiceExperiment();
 
     if (avp::dev::kTwoViewExperiment)
         avp::StartTwoViewExperiment();
@@ -119,6 +127,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
     if (reason == DLL_PROCESS_ATTACH)
     {
         DisableThreadLibraryCalls(module);
+        // First thing: crash forensics (avpvr_crash.log). Only CreateFile + AddVectoredExceptionHandler, both fine
+        // under the loader lock.
+        avp::InstallCrashLogger();
         // Pinned so a FreeLibrary on device teardown can't unload the mod mid-game (seen in MOHW).
         HMODULE pinned = nullptr;
         GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
@@ -130,9 +141,12 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
             EnsureInitialized();
         }).detach();
     }
-    else if (reason == DLL_PROCESS_DETACH && reserved == nullptr)
+    else if (reason == DLL_PROCESS_DETACH)
     {
-        MH_Uninitialize();
+        if (reserved != nullptr)
+            avp::LogProcessExit(); // process exit; nothing else here -- other threads are already gone
+        else
+            MH_Uninitialize();     // FreeLibrary (shouldn't happen: pinned)
     }
     return TRUE;
 }

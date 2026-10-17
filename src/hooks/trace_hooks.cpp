@@ -45,6 +45,8 @@ constexpr Dump PtrFloats(uint8_t arg, uint8_t n) { return {DumpKind::PtrArgFloat
 constexpr Dump EcxInts(uint16_t off, uint8_t n) { return {DumpKind::EcxInts, 0, off, n}; }
 constexpr Dump EcxFloats(uint16_t off, uint8_t n) { return {DumpKind::EcxFloats, 0, off, n}; }
 
+constexpr int kMaxSlots = 8;
+
 struct TraceDef
 {
     const char* name;
@@ -52,7 +54,16 @@ struct TraceDef
     uint32_t group;
     Dump dump;
     bool hot; // detailed lines only for the first calls, never throttled-repeating
+    // Slot hooks (vtable entries, IAT entries): pointer slots that hold `address`. When any are given, the hook is
+    // installed by writing the stub's address into each slot instead of patching code -- the only kind allowed on
+    // CEG-checked game code (see dev_flags.h). Only calls made through these slots are seen.
+    uintptr_t slots[kMaxSlots];
+    // Shadow entry: the stub isn't installed anywhere by this file; vmt_shadow.cpp puts it into per-object shadow
+    // vtables (heap memory) wherever the original vtable holds `address`. CEG-safe.
+    bool shadow;
 };
+
+constexpr bool IsSlotHook(const TraceDef& def) { return def.slots[0] != 0; }
 
 using namespace dev;
 
@@ -126,6 +137,18 @@ const TraceDef kTraces[] = {
     {"Console_Close",               addr::Console_Close,               kTraceConsole, None(), false},
     {"Console_IsAllowed",           addr::Console_IsAllowed,           kTraceConsole, None(), false},
     {"Console_Draw",                addr::Console_Draw,                kTraceConsole, EcxFloats(0x8, 2), false},
+
+    // ---- Shadow entries (CEG-safe): stubs for per-object shadow vtables, see hooks/vmt_shadow.h ----
+    {"SH CamComp_ApplyToRenderCamera", addr::CamComp_ApplyToRenderCamera, kTraceCameraShadow, EcxFloats(0x118, 12),
+     false, {}, true},
+    {"SH CamComp_UpdatePosition", addr::CamComp_UpdatePosition, kTraceCameraShadow, EcxFloats(0x58, 3), false, {},
+     true},
+
+    // ---- Slot hooks (vtable / IAT): write into the exe image -- CEG-UNSAFE for exe slots ----
+    // Camera component vtable +0x08 in all five camera classes (0091D694, 00920054, 00921360, 009226E4, 00923280).
+    {"VT CamComp_ApplyToRenderCamera", addr::CamComp_ApplyToRenderCamera, kTraceCameraVT, EcxFloats(0x118, 12), false,
+     {addr::vt_CamComp_Apply_Slots[0], addr::vt_CamComp_Apply_Slots[1], addr::vt_CamComp_Apply_Slots[2],
+      addr::vt_CamComp_Apply_Slots[3], addr::vt_CamComp_Apply_Slots[4]}},
 };
 
 constexpr int kTraceCount = static_cast<int>(sizeof(kTraces) / sizeof(kTraces[0]));
@@ -155,6 +178,7 @@ struct TraceState
 
 TraceState g_state[kTraceCount];
 void* g_trampolines[kTraceCount]; // read by the stubs' final `jmp [slot]`
+void* g_stubs[kTraceCount];       // each trace's detour stub
 thread_local bool t_inHook = false;
 
 bool SafeCopy(void* dst, const void* src, size_t bytes)
@@ -383,6 +407,41 @@ void SummaryLoop()
     }
 }
 
+// Points every slot of trace `index` at its stub. The stub's final `jmp [g_trampolines[index]]` goes to the original
+// function pointer, so nothing in the game's code changes. Every slot must still hold the expected function
+// (a mismatch means another hook got there first, or a different build) -- those slots are skipped.
+bool InstallSlotHook(int index, uint8_t* stub)
+{
+    const TraceDef& def = kTraces[index];
+    g_trampolines[index] = reinterpret_cast<void*>(def.address);
+    int patched = 0;
+    for (uintptr_t slot : def.slots)
+    {
+        if (!slot)
+            break;
+        auto p = reinterpret_cast<volatile LONG*>(slot);
+        if (static_cast<uintptr_t>(*p) != def.address)
+        {
+            AVP_LOG(kLog, "SKIP slot %08X for %s: holds %08X, expected %08X", static_cast<unsigned>(slot), def.name,
+                    static_cast<unsigned>(*p), static_cast<unsigned>(def.address));
+            continue;
+        }
+        DWORD oldProtect = 0;
+        if (!VirtualProtect(reinterpret_cast<void*>(slot), sizeof(LONG), PAGE_READWRITE, &oldProtect))
+        {
+            AVP_LOG(kLog, "VirtualProtect failed on slot %08X for %s (%lu)", static_cast<unsigned>(slot), def.name,
+                    GetLastError());
+            continue;
+        }
+        InterlockedExchange(p, static_cast<LONG>(reinterpret_cast<uintptr_t>(stub)));
+        VirtualProtect(reinterpret_cast<void*>(slot), sizeof(LONG), oldProtect, &oldProtect);
+        AVP_LOG(kLog, "slot hook %s: %08X now -> stub %p (original %08X)", def.name, static_cast<unsigned>(slot), stub,
+                static_cast<unsigned>(def.address));
+        ++patched;
+    }
+    return patched > 0;
+}
+
 } // namespace
 
 int InstallTraceHooks()
@@ -403,6 +462,25 @@ int InstallTraceHooks()
             continue;
         uint8_t* stub = stubs + i * kStubSize;
         BuildStub(stub, static_cast<uint32_t>(i));
+        g_stubs[i] = stub;
+        if (def.shadow)
+        {
+            g_trampolines[i] = reinterpret_cast<void*>(def.address); // the stub continues into the original
+            g_state[i].installed = true;
+            ++installed;
+            AVP_LOG(kLog, "shadow stub %s ready at %p (original %08X)", def.name, stub,
+                    static_cast<unsigned>(def.address));
+            continue;
+        }
+        if (IsSlotHook(def))
+        {
+            if (InstallSlotHook(i, stub))
+            {
+                g_state[i].installed = true;
+                ++installed;
+            }
+            continue;
+        }
         void* target = reinterpret_cast<void*>(def.address);
         MH_STATUS status = MH_CreateHook(target, stub, &g_trampolines[i]);
         if (status == MH_OK)
@@ -430,6 +508,16 @@ bool SetTracePre(uintptr_t address, TracePreFn fn)
         }
     }
     return false;
+}
+
+void* TraceShadowStub(uintptr_t functionAddress)
+{
+    for (int i = 0; i < kTraceCount; ++i)
+    {
+        if (kTraces[i].shadow && kTraces[i].address == functionAddress && g_state[i].installed)
+            return g_stubs[i];
+    }
+    return nullptr;
 }
 
 void StartTraceSummaryThread()

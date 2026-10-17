@@ -44,6 +44,11 @@ constexpr uintptr_t Render_FinishAndPresent      = 0x0067BF00;
 constexpr uintptr_t D3D_PresentFrame             = 0x0066A840;
 constexpr uintptr_t D3D_CreateDeviceAndSwapChain = 0x0066C060;
 constexpr uintptr_t D3D_HandleModeChange         = 0x0066C580;
+// In-game frame (state function at 00812330): Frame_BeginFrame(1); Frame_RenderScene(); end-frame/present.
+constexpr uintptr_t Frame_BeginFrame             = 0x00808DA0; // cdecl(char clear): view 0 current, render states
+constexpr uintptr_t Frame_RenderScene            = 0x0080A440; // cdecl(): Scene_RenderFrame(*(0x00A71C50))
+constexpr uintptr_t Scene_RenderFrame            = 0x00808E00; // the whole 3D frame: ~30 subsystem passes
+constexpr uintptr_t Frame_EndFrame               = 0x0080A0E0; // -> Render_EndFrame -> present
 
 // ---- Multi-view ----
 constexpr uintptr_t View_ForEachUpdateObjects    = 0x00662780;
@@ -83,6 +88,11 @@ constexpr uintptr_t Console_Close                = 0x0058C180;
 constexpr uintptr_t Console_IsAllowed            = 0x0079D4E0;
 constexpr uintptr_t Console_Draw                 = 0x0058D2F0;
 
+// ---- Vtable slots (in .rdata) for slot hooks -- CEG forbids inline hooks on game code ----
+// CamComp_ApplyToRenderCamera at +0x08 of the five camera-component vtables 0091D694, 00920054, 00921360, 009226E4,
+// 00923280 (each verified to hold 0x00695760 in the shipping exe).
+constexpr uintptr_t vt_CamComp_Apply_Slots[5] = {0x0091D69C, 0x0092005C, 0x00921368, 0x009226EC, 0x00923288};
+
 // ---- Globals ----
 constexpr uintptr_t g_CurViewCamera        = 0x009CCD48; // pointer
 constexpr uintptr_t g_ViewCount            = 0x009CCD4C; // int, 1 in the exe
@@ -103,6 +113,12 @@ constexpr uintptr_t g_ScreenWidth          = 0x009FAAFC; // int
 constexpr uintptr_t g_ScreenHeight         = 0x009FAB00; // int
 constexpr uintptr_t g_VSync                = 0x009CFB69; // byte
 constexpr uintptr_t g_FrameDt              = 0x009E1494; // float
+constexpr uintptr_t g_FrameCounter         = 0x009E1480; // int, keys per-frame caches (visibility masks, job joins)
+// Per-frame job batch joined inside Scene_RenderFrame (FUN_004F9220 -> FUN_004F6B90): the render waits on one event
+// per worker only if the batch was kicked this frame (kick frame == g_FrameCounter). A second render must not re-join
+// (events already consumed -> infinite wait), so it moves the kick frame aside for its duration.
+constexpr uintptr_t g_JobBatchKickFrame    = 0x009CCD0C; // int
+constexpr uintptr_t g_JobBatchWorkerCount  = 0x009CCD10; // int
 constexpr uintptr_t g_PlayerProfile        = 0x00A71E14; // pointer
 constexpr uintptr_t g_Console              = 0x009E77A0; // pointer
 constexpr uintptr_t g_ConsoleGateA         = 0x009E1C58; // byte, must be != 0 for the console

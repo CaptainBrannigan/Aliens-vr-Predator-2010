@@ -201,3 +201,55 @@ That's what the live test answers.
   `character+0xE8` bit 2 → `character+0x98` is the skin object. Referenced from 6 character vtables (slots at `0091FF8C`, `009212CC`, `009240AC`, `0092424C`, `00924424`, `009245CC`).
 - `Entity_CreateVisionAndWeaponComps` (`007062C0`): creates the VisionMode and Weapon components.
 - The weapon/hands render path and whether the viewmodel uses its own FOV are still unknown — needs live work.
+
+---
+
+## 10. Steam CEG integrity checks (2026-10-16, live-confirmed)
+
+The exe is not packed, but it carries **Steam CEG** tamper checks. With 54 inline (MinHook) hooks on game functions,
+the game exits cleanly (exit code 0, no exception) about 0.6 s into the first level load, both times. The exit hook
+(kernel32 `ExitProcess`, `avpvr_crash.log`) caught it: `ExitProcess(0)` from the `AVP_ConnectionState_Loading::PerformLoad`
+thread, fake return address `0x8000DEAD`, stack wiped.
+
+- Kill stubs: `FUN_0083A1C0`, `FUN_0083A2B0`, `FUN_0083A3A0`, plus unnamed ones at `0083A79F`..`0083AFEF` — each zeroes
+  the stack, then jumps to `ExitProcess` through an obfuscated pointer (`DAT_0096E17C + DAT_0096E168`, ...).
+- Callers (the checkers): `FUN_0083B0E0`, `FUN_0083B140` (and `FUN_0083A5C0`).
+- A separate exit site at `00876FF0` (`call 00877CE0; push 0x8000DEAD; call [ExitProcess]`) uses 0x8000DEAD as the
+  exit *code* — not the path seen live.
+
+**Consequence:** no inline patches on CEG-checked game code. Use vtable-slot swaps (camera component, look controller,
+entity tick are virtual), IAT hooks (XInput, kernel32), hooks inside system DLLs (swapchain Present in dxgi), direct
+memory reads/writes of the camera structs, and hardware breakpoints for the few non-virtual functions.
+
+**`.rdata` is checked too (live, 2026-10-16):** swapping only the five `CamComp_ApplyToRenderCamera` vtable slots in
+`.rdata` (no code bytes changed, the hook never even ran) produced the same silent exit at the first level load.
+So vtable-slot and exe-IAT hooks are out as well. **Virtual functions are hooked with per-object shadow vtables**
+(`src/hooks/vmt_shadow.cpp`): a copy of the class vtable in mod memory with stub entries, and a heap scan that
+validates each object (camera component: `obj+4` = owner entity, `owner+0x28 == obj`) before atomically repointing
+its vtable pointer. Only heap memory is written.
+
+---
+
+## 11. Stereo: native multi-view ruled out, render-twice works (2026-10-16, live)
+
+**Native multi-view is dead.** With `g_ViewCount = 2`, draw counts don't double. `RenderQueue_SubmitMeshPerView`
+submits opaque meshes (alpha 1.0, most of the scene) as one state-sorted packet with all view bits, executed once;
+only transparent objects and lights get per-view packets. So view 1 got only the light pass (35-70 draws), which
+left view 0 unlit. Making opaque geometry per view would need code changes (CEG).
+
+**Frame structure** (in-game state function at `00812330`): `Frame_BeginFrame(1)` (`00808DA0`),
+`Frame_RenderScene()` (`0080A440` -> `Scene_RenderFrame(*0x00A71C50)` at `00808E00`), `Frame_EndFrame` -> present.
+`Scene_RenderFrame` is ~30 subsystem passes; the mesh queue (`Scene_MeshQueuePass` `0053AB20`: open queue, traverse,
+`RenderQueue_SortAndExecute`) is ~55% of the draws.
+
+**Render-twice works:** from the swapchain Present hook, call `Frame_BeginFrame(1)` + `Frame_RenderScene()` again with
+a moved camera. Two full renders per frame at 60 fps (4K, vsync); draws and viewport calls double. Requirements found:
+- Only on gameplay frames (gate: the player camera component's shadow hook fired since the last Present). During the
+  level load the second render hung the main loop.
+- Skip the per-frame job batch join for the second render: `Scene_JoinJobBatchAndPost` (`004F9220`) ->
+  `JobBatch_Join` (`004F6B90`) waits on one event per worker when `g_JobBatchKickFrame` (`009CCD0C`) ==
+  `g_FrameCounter` (`009E1480`); the events were consumed by the first render -> infinite wait. Moving the kick frame
+  aside for the second render (data write) fixes it.
+- Camera motion blur must be off (it compares each render with the previous one -> the whole world smears).
+- Culling is reused from the first render (per-frame visibility caches keyed by `g_FrameCounter`): no visible gaps
+  even with a 30-degree yaw on the second render.

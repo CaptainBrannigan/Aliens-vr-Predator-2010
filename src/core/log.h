@@ -1,16 +1,16 @@
 #pragma once
-// File logger shared by the whole mod (ported from the MOHW mod's sdk/logging.h).
+// File logger shared by the whole mod (ported from the MOHW mod's sdk/logging.h, then changed to raw Win32 I/O).
 //
-// One FILE* per log file for the process lifetime, guarded by a mutex, fflush after every line so a crash loses
-// nothing. Files live next to the DLL (the game folder). Each launch truncates a file on first use; the previous
-// session's copy is kept as <name>.previous.log, so a crash followed by a relaunch doesn't wipe the evidence.
-// Opened with FILE_SHARE_READ so logs can be read live while the game runs.
+// One HANDLE per log file for the process lifetime, written with WriteFile -- deliberately no CRT FILE* streams:
+// the game's exit kills our background threads, possibly mid-write, and the static CRT's shutdown would then wait
+// forever on a stream lock held by a dead thread (first live run, 2026-10-16, ended in a process stuck at exit).
+// WriteFile with no buffering also means every line is on disk the moment the call returns.
+// Files live next to the DLL (the game folder). Each launch truncates a file on first use; the previous session's
+// copy is kept as <name>.previous.log. Opened with FILE_SHARE_READ so logs can be read live.
 
 #include <windows.h>
-#include <io.h>
-#include <fcntl.h>
-#include <cstdio>
 #include <cstdarg>
+#include <cstdio>
 #include <string>
 #include <unordered_map>
 #include <mutex>
@@ -29,62 +29,56 @@ inline std::string ModuleDirectory()
     return slash == std::string::npos ? std::string() : path.substr(0, slash + 1);
 }
 
-inline std::unordered_map<std::string, FILE*>& LogFileHandles()
+inline std::unordered_map<std::string, HANDLE>& LogFileHandles()
 {
-    static std::unordered_map<std::string, FILE*> handles;
-    return handles;
+    static auto* handles = new std::unordered_map<std::string, HANDLE>(); // leaked on purpose: no exit-time destructor
+    return *handles;
 }
 
 inline std::mutex& LogMutex()
 {
-    static std::mutex m;
-    return m;
+    static auto* m = new std::mutex(); // leaked on purpose, see above
+    return *m;
 }
 
-inline FILE* OpenLogFile(const char* fileName)
+inline HANDLE OpenLogFile(const char* fileName)
 {
     std::string path = ModuleDirectory() + fileName;
     std::string previous = path;
     size_t dot = previous.find_last_of('.');
     previous = (dot == std::string::npos ? previous : previous.substr(0, dot)) + ".previous.log";
     MoveFileExA(path.c_str(), previous.c_str(), MOVEFILE_REPLACE_EXISTING);
-
-    HANDLE file = CreateFileA(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
-                              FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file == INVALID_HANDLE_VALUE)
-        return nullptr;
-    int fd = _open_osfhandle(reinterpret_cast<intptr_t>(file), _O_APPEND | _O_TEXT);
-    if (fd == -1)
-    {
-        CloseHandle(file);
-        return nullptr;
-    }
-    FILE* f = _fdopen(fd, "a");
-    if (!f)
-        _close(fd);
-    return f;
+    return CreateFileA(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
+                       nullptr);
 }
 
 inline void LogV(const char* fileName, const char* fmt, va_list args)
 {
+    char line[2048];
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    int used = _snprintf_s(line, sizeof(line), _TRUNCATE, "[%02d:%02d:%02d.%03d] ", st.wHour, st.wMinute, st.wSecond,
+                           st.wMilliseconds);
+    if (used < 0)
+        used = 0;
+    int body = _vsnprintf_s(line + used, sizeof(line) - used - 2, _TRUNCATE, fmt, args);
+    used = body < 0 ? static_cast<int>(strlen(line)) : used + body;
+    line[used++] = '\r';
+    line[used++] = '\n';
+
     std::lock_guard<std::mutex> lock(LogMutex());
     auto& handles = LogFileHandles();
     auto it = handles.find(fileName);
-    FILE* f = it != handles.end() ? it->second : nullptr;
-    if (!f)
+    HANDLE h = it != handles.end() ? it->second : INVALID_HANDLE_VALUE;
+    if (h == INVALID_HANDLE_VALUE)
     {
-        f = OpenLogFile(fileName);
-        if (!f)
+        h = OpenLogFile(fileName);
+        if (h == INVALID_HANDLE_VALUE)
             return;
-        handles[fileName] = f;
+        handles[fileName] = h;
     }
-
-    SYSTEMTIME st;
-    GetLocalTime(&st);
-    fprintf(f, "[%02d:%02d:%02d.%03d] ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
-    vfprintf(f, fmt, args);
-    fputc('\n', f);
-    fflush(f);
+    DWORD written = 0;
+    WriteFile(h, line, static_cast<DWORD>(used), &written, nullptr);
 }
 
 inline void Log(const char* fileName, const char* fmt, ...)

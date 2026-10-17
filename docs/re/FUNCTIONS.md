@@ -1,9 +1,9 @@
 # AvP 2010 identified functions and globals
 
-Generated from `avp_symbols.csv` (the source of truth; edit it, then re-run `ApplySymbols.java` to push names into Ghidra).
-Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confidence: high = role read directly from decompile; medium = inferred; open = role unknown.
+Generated from `avp_symbols.csv` (the source of truth; edit it, then re-run `tools/ghidra/ApplySymbols.java`).
+Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confidence: high = read from decompile/live; medium = inferred; open = unknown.
 
-84 functions, 37 globals/vtables. All are applied as names + plate comments in the AVP2010 Ghidra project.
+102 functions, 40 globals/vtables.
 
 ## Camera
 
@@ -47,6 +47,10 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 
 | Address | Kind | Name | Conf. | Role |
 |---|---|---|---|---|
+| `004F6B90` | func | `JobBatch_Join` | high | If kick frame (009CCD0C) == frame counter: WaitForSingleObject on each worker event (count 009CCD10) |
+| `004F6E30` | func | `JobBatch_WorkerRange` | high | Worker job: processes its share of objects, then signals its event (FUN_00641D60) |
+| `004F9220` | func | `Scene_JoinJobBatchAndPost` | high | Scene pass 3: joins the per-frame job batch (FUN_004F6B90) then a post step; hangs if re-joined |
+| `0053AB20` | func | `Scene_MeshQueuePass` | high | Opens render queue, traverses scene (submit), sorts+executes queue; ~55% of scene draws |
 | `005D8790` | func | `Render_SetupViewportAspect` | medium | Viewport/letterbox/aspect from screen size; calls Cam_SetViewportRect + Cam_SetHorizontalFov |
 | `005D8B60` | func | `Render_BeginFrame` | medium | Per-frame counters reset; dead half-width mode behind g_HalfWidthMode |
 | `005D8C00` | func | `Render_EndFrame` | high | End of frame -> Render_FinishAndPresent |
@@ -56,7 +60,15 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 | `0066C060` | func | `D3D_CreateDeviceAndSwapChain` | high | D3D11CreateDeviceAndSwapChain; R8G8B8A8_UNORM_SRGB, 2 buffers |
 | `0066C580` | func | `D3D_HandleModeChange` | medium | Fullscreen state query + resize |
 | `0067BF00` | func | `Render_FinishAndPresent` | high | Final passes then D3D_PresentFrame |
+| `00808DA0` | func | `Frame_BeginFrame` | high | cdecl(char clear): view 0 current, optional clears, Render_BeginFrame, render-state reset; in-game passes 1 |
+| `00808E00` | func | `Scene_RenderFrame` | high | The whole 3D frame: ~30 subsystem render passes (mesh queue 0053AB20, 005D7C50, 005D2900, 005FF120, GUI 0079C480) |
+| `00809F80` | func | `Frame_Update` | high | Per-frame game update: systems, console tick, camera shake |
+| `0080A0E0` | func | `Frame_EndFrame` | high | End of frame -> Render_EndFrame -> present |
+| `0080A440` | func | `Frame_RenderScene` | high | cdecl(): Scene_RenderFrame(*(0x00A71C50)) -- the in-game 3D frame entry |
+| `009CCD0C` | data | `g_JobBatchKickFrame` | high | Frame the job batch was kicked; join only when == g_FrameCounter |
+| `009CCD10` | data | `g_JobBatchWorkerCount` | high | Number of workers/events in the job batch |
 | `009CFB69` | data | `g_VSync` | medium | Present sync interval flag |
+| `009E1480` | data | `g_FrameCounter` | high | Frame number; keys per-frame caches (visibility masks, job joins) |
 | `009EA257` | data | `g_HalfWidthMode` | high | Dead flag (BSS, never written) for a half-width viewport mode |
 | `009FAAFC` | data | `g_ScreenWidth` | medium | Screen width used for viewports |
 | `009FAB00` | data | `g_ScreenHeight` | medium | Screen height used for viewports |
@@ -72,11 +84,16 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 
 | Address | Kind | Name | Conf. | Role |
 |---|---|---|---|---|
+| `004E6720` | func | `View_Select` | high | Make view N current (camera pointer, index, mask, dirty) |
+| `004E6760` | func | `Node_GetRootZone` | high | Walk parent chain (+0x148) to root, return zone id (+0xD4) |
 | `004E8F50` | func | `Mesh_SubmitForViews` | high | Mesh submit: builds view mask from active views then queues |
 | `005D3F80` | func | `Gui_MapRectToViewViewport` | high | Maps a 2D rect/point into the current view's viewport: screen * (scale cam+0x3C/+0x40) + offset cam+0x44/+0x48 |
+| `005D8C40` | func | `RenderQueue_Open` | high | Sets the queue-open flag (009FAAE8) that submit functions check |
 | `005D8CA0` | func | `View_SelectAndSortKey` | high | Switch current view + compute distance sort key |
+| `005D8DE0` | func | `RenderQueue_SortAndExecute` | high | qsort packets, execute by type (0 object, 1/2 mesh, 3 callback) |
 | `005D8FD0` | func | `RenderQueue_SubmitPerView` | high | Emits one packet per view bit (simpler variant) |
 | `005D90B0` | func | `RenderQueue_SubmitMeshPerView` | high | Emits one draw packet per view bit |
+| `005DCD70` | func | `RenderQueue_ExecuteObject` | high | Object packet: per-view visibility (zone cam+0x110, active +0x114) -> submit or draw |
 | `005FE180` | func | `View_ComputeBoundsVisibility` | high | Bounds vs every active view -> mask |
 | `006006A0` | func | `View_ComputeVisibilityMask` | high | Per-object per-view visibility bitmask (checks view active byte cam+0x114) |
 | `0063EB00` | func | `View_AnyWithinDistance` | high | True if a point is within range of any view camera |
@@ -168,5 +185,9 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 
 | Address | Kind | Name | Conf. | Role |
 |---|---|---|---|---|
+| `00641D30` | func | `Event_Wait` | high | WaitForSingleObject(*ecx, INFINITE) -- shared by the job system |
+| `0083A1C0` | func | `CEG_KillStub1` | high | Steam CEG tamper response: wipe stack, ExitProcess(0) via obfuscated pointer |
+| `0083B0E0` | func | `CEG_Checker1` | high | Steam CEG integrity checker (calls kill stubs) |
+| `0083B140` | func | `CEG_Checker2` | high | Steam CEG integrity checker (calls kill stubs) |
 | `0087992A` | func | `Audio_FormatName` | high | Audio format string (Mono/Stereo/...) - not graphics |
 | `009E1494` | data | `g_FrameDt` | medium | Frame delta time (scales speeds everywhere) |

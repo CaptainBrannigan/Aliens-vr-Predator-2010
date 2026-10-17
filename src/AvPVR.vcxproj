@@ -80,8 +80,12 @@
   <ItemGroup>
     <ClCompile Include="proxy\dllmain.cpp" />
     <ClCompile Include="core\game.cpp" />
+    <ClCompile Include="core\crash_log.cpp" />
     <ClCompile Include="hooks\trace_hooks.cpp" />
     <ClCompile Include="hooks\snapshot.cpp" />
+    <ClCompile Include="hooks\d3d_probe.cpp" />
+    <ClCompile Include="hooks\render_twice_experiment.cpp" />
+    <ClCompile Include="hooks\vmt_shadow.cpp" />
     <ClCompile Include="hooks\two_view_experiment.cpp" />
     <ClCompile Include="..\third_party\minhook\src\buffer.c" />
     <ClCompile Include="..\third_party\minhook\src\hook.c" />
@@ -90,11 +94,15 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="core\addresses.h" />
+    <ClInclude Include="core\crash_log.h" />
     <ClInclude Include="core\dev_flags.h" />
     <ClInclude Include="core\game.h" />
     <ClInclude Include="core\log.h" />
     <ClInclude Include="hooks\trace_hooks.h" />
     <ClInclude Include="hooks\snapshot.h" />
+    <ClInclude Include="hooks\d3d_probe.h" />
+    <ClInclude Include="hooks\render_twice_experiment.h" />
+    <ClInclude Include="hooks\vmt_shadow.h" />
     <ClInclude Include="hooks\two_view_experiment.h" />
   </ItemGroup>
   <ItemGroup>

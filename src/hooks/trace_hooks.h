@@ -38,6 +38,10 @@ int InstallTraceHooks();
 // Attaches a pre-callback to the traced function at `address` (must be in the trace table and installed).
 bool SetTracePre(uintptr_t address, TracePreFn fn);
 
+// The detour stub of an installed shadow entry for `functionAddress` (dev::kTraceCameraShadow etc.), or nullptr.
+// vmt_shadow.cpp writes it into shadow vtables wherever the original vtable holds that function.
+void* TraceShadowStub(uintptr_t functionAddress);
+
 // Starts the background thread that writes the periodic per-hook summaries.
 void StartTraceSummaryThread();
 
