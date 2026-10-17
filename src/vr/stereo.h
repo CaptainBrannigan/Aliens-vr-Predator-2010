@@ -36,6 +36,24 @@ bool InEyeRender();
 // A stereo frame started within the last half second (VR gameplay is running).
 bool StereoActive();
 
+// The last head pose's yaw (relative to the recenter reference, + = turned left), pitch (+ = up) and roll, degrees,
+// in OpenVR's convention (no engine signs). False before the first valid pose.
+bool HeadAnglesDeg(float out[3]);
+
+// Main thread: the latest head pose's rotation in the engine's convention, relative to the recenter reference
+// (3x3 row-major, columns = right, up, forward). False before the first valid pose / recenter.
+bool HeadRotation(float m[9]);
+
+// The engine's rotation for (pitch, yaw, roll) radians, its own conventions (+ pitch = up, + yaw = right):
+// 3x3 row-major, columns = right, up, forward.
+void EngineEulerMatrix(const float angles[3], float m[9]);
+
+// Recenters done so far (each resets the head yaw reference).
+unsigned RecenterCount();
+
+// The thread that presents (diagnostics).
+unsigned long PresentThread();
+
 // Any thread: the next stereo frame takes the current head yaw as straight ahead.
 void RequestRecenter();
 

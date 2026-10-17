@@ -31,6 +31,7 @@ bool g_screenVisible = false;
 EyeGeometry g_eyes[2]{};
 DWORD g_lastAttempt = 0;
 bool g_failedPermanently = false;
+HMODULE g_dll = nullptr;
 
 bool IsVrServerRunning()
 {
@@ -48,7 +49,7 @@ bool IsVrServerRunning()
 
 void Connect()
 {
-    static HMODULE dll = nullptr;
+    HMODULE& dll = g_dll;
     if (!dll)
     {
         const std::string path = ModuleDirectory() + "openvr_api.dll";
@@ -133,6 +134,38 @@ void TryConnect()
 }
 
 bool IsConnected() { return g_compositor != nullptr; }
+
+void ShutdownForExit(const char* why)
+{
+    static bool done = false;
+    if (done)
+        return;
+    done = true;
+    g_failedPermanently = true; // no reconnect from the frames still to come
+    if (!g_compositor)
+        return;
+    AVP_LOG(kLog, "game quitting (%s): shutting SteamVR down", why);
+    dashboard::Stop();
+    AVP_LOG(kLog, "  dashboard stopped");
+    input::Shutdown();
+    {
+        std::lock_guard<std::mutex> lock(OverlayMutex());
+        if (g_overlay && g_screen != ::vr::k_ulOverlayHandleInvalid)
+            g_overlay->HideOverlay(g_screen);
+        g_screenVisible = false;
+    }
+    AVP_LOG(kLog, "  overlays hidden");
+    g_compositor->ClearLastSubmittedFrame();
+    AVP_LOG(kLog, "  last frame cleared");
+    using PFN_VR_ShutdownInternal = void(__cdecl*)();
+    auto shutdown = g_dll ? reinterpret_cast<PFN_VR_ShutdownInternal>(GetProcAddress(g_dll, "VR_ShutdownInternal")) : nullptr;
+    g_compositor = nullptr;
+    g_system = nullptr;
+    g_overlay = nullptr;
+    if (shutdown)
+        shutdown();
+    AVP_LOG(kLog, "SteamVR shut down%s", shutdown ? "" : " (no VR_ShutdownInternal export -- just disconnected)");
+}
 
 std::mutex& OverlayMutex()
 {

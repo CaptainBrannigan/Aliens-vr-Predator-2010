@@ -50,4 +50,8 @@ void HideScreen();
 // Serializes IVROverlay calls between the main thread (screen) and the dashboard thread (vr/dashboard.cpp).
 std::mutex& OverlayMutex();
 
+// The game is quitting (hooks/quit_hook.h): stop the dashboard thread and SteamVR Input, clear the last submitted
+// frame, VR_Shutdown, and never reconnect. Main thread; once.
+void ShutdownForExit(const char* why);
+
 } // namespace avp::vr

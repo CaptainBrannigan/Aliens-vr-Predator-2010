@@ -2,6 +2,7 @@
 
 #include "render_twice_experiment.h"
 #include "hud_passes.h"
+#include "quit_hook.h"
 #include "../vr/stereo.h"
 #include "../core/settings.h"
 #include "../core/addresses.h"
@@ -434,7 +435,7 @@ void LogHiddenDraw(ID3D11DeviceContext* c, int pass, int drawNo, UINT count)
     D3D11_VIEWPORT vp{};
     c->RSGetViewports(&n, &vp);
     AVP_LOG(kLog,
-            "DEBUG hidden: pass '%s' draw #%d (%s render): %u indices/vertices, topology %d, VS %p PS %p, PS texture 0 "
+            "hidden: pass '%s' draw #%d (%s render): %u indices/vertices, topology %d, VS %p PS %p, PS texture 0 "
             "%ux%u format %u, target %s, viewport %.0f,%.0f %.0fx%.0f",
             HudPassLabel(pass), drawNo, g_secondRender ? "right-eye" : "game", count, topo, vs, ps, tex.Width,
             tex.Height, tex.Format, main ? "eye image" : "offscreen", vp.TopLeftX, vp.TopLeftY, vp.Width, vp.Height);
@@ -648,6 +649,19 @@ bool HudBeforeDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count)
         }
     }
 
+    // Marine reticle (settings HideMarineReticle): the GUI pass's 9th draw (user-found with the debug rows,
+    // 2026-10-17; not the reticle for the Alien or Predator). Its signature is logged for a sturdier match later.
+    if (pass == kGuiPass && g_drawInPass == 9 && settings::HideMarineReticle() && Global<int>(addr::g_PlayerSpecies) == 2)
+    {
+        static int logged = 0;
+        if (logged < 3)
+        {
+            ++logged;
+            LogHiddenDraw(c, passKey, 9, count);
+        }
+        return true;
+    }
+
     if (!inEye)
         return false;
     if (g_hudLatched)
@@ -826,6 +840,16 @@ void STDMETHODCALLTYPE Hook_RSSetViewports(ID3D11DeviceContext* c, UINT n, const
 HRESULT STDMETHODCALLTYPE Hook_Present(IDXGISwapChain* sc, UINT sync, UINT flags)
 {
     g_presentThread = GetCurrentThreadId();
+    static bool haveWindow = false;
+    if (!haveWindow)
+    {
+        DXGI_SWAP_CHAIN_DESC desc{};
+        if (SUCCEEDED(sc->GetDesc(&desc)) && desc.OutputWindow)
+        {
+            SetGameWindow(desc.OutputWindow);
+            haveWindow = true;
+        }
+    }
     g_second.draws += g_frame.draws;
     for (int i = 0; i < 3; ++i)
         g_second.drawsView[i] += g_frame.drawsView[i];

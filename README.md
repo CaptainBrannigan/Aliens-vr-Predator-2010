@@ -15,8 +15,11 @@ Working, verified in the headset:
 - **Touch controllers as a virtual Xbox pad** (Quest 3 tested), rebindable in SteamVR's binding UI.
 - Level reloads within a session.
 
-Known issues / not done yet: head look doesn't drive the player's aim yet (next step); Alien wall-walking and steep
-look angles make the Alien camera spin; no positional (6DoF) head tracking yet; no motion-controller aiming yet.
+- **Head aim** for all three species: the head aims (shots follow it), the right stick turns; the view is the game's
+  camera plus the head's difference, upright on Alien walls and ceilings; per-species aim offsets.
+
+Not done yet: positional (6DoF) head tracking, motion-controller aiming, melee gestures; multiplayer replication of
+the head-driven look is unverified.
 
 ## Using it
 
@@ -34,7 +37,7 @@ Default Touch layout (change it in SteamVR -> Settings -> Controllers -> Manage 
 | A / B / X / Y | A / B / X / Y (held as long as you hold them) |
 | Thumbrest touch (left / right) | LB / RB |
 | Double press X / Y / B / A | D-pad left / up / right / down |
-| Long press Y | Start |
+| Hold the right thumbrest (0.8 s) | Start (RB is held meanwhile) |
 | Grips | Reserved for melee gestures (nothing yet); Back unbound |
 
 If you've ever saved your own bindings for the game, SteamVR keeps using that copy: pick "AvP VR defaults" there to

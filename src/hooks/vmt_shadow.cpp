@@ -62,6 +62,15 @@ bool ValidateCameraComponent(uintptr_t object)
            sub2 == 0x0091D4BC && SafeRead32(object + 0x7C, &settings) && IsUserPointer(settings);
 }
 
+// A look controller (addresses.h vt_LookCtrl*): ctrl+0x60 points at its own embedded input mapping, ctrl+0x30 or
+// ctrl+0x48 (LookCtrl_Ctor sets the first, LookCtrl_Update switches between them); +0x04 is the owner.
+bool ValidateLookController(uintptr_t object)
+{
+    uint32_t mapping = 0, owner = 0;
+    return SafeRead32(object + 0x60, &mapping) && (mapping == object + 0x30 || mapping == object + 0x48) &&
+           SafeRead32(object + 0x04, &owner) && IsUserPointer(owner);
+}
+
 // Logs a candidate's identifying fields the first time it's seen (capped), with the validation verdict.
 void LogCandidateOnce(const char* className, uintptr_t object, bool valid)
 {
@@ -89,6 +98,10 @@ ShadowClass g_classes[] = {
     {"CameraComponent 00921360", 0x00921360, &ValidateCameraComponent},
     {"CameraComponent 009226E4", 0x009226E4, &ValidateCameraComponent},
     {"CameraComponent 00923280", 0x00923280, &ValidateCameraComponent},
+    // Look controllers, one class per species (hooks/look_probe.cpp replaces SetLookDirection, +0x9C).
+    {"LookController A 00923C88", addr::vt_LookCtrlClassA, &ValidateLookController},
+    {"LookController B 009220F8", addr::vt_LookCtrlClassB, &ValidateLookController},
+    {"LookController C 00922E40", addr::vt_LookCtrlClassC, &ValidateLookController},
 };
 constexpr int kClassCount = static_cast<int>(sizeof(g_classes) / sizeof(g_classes[0]));
 

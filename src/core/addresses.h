@@ -72,6 +72,16 @@ constexpr uintptr_t LookCtrl_UpdateLook          = 0x006ACE60;
 constexpr uintptr_t LookCtrl_SetLookDirection    = 0x006AC1E0;
 constexpr uintptr_t LookCtrl_GetAction           = 0x0069EBB0;
 constexpr uintptr_t LookCtrlSub_HandleActions678 = 0x006AC740;
+// Look-controller classes (vtables). Base 0091FAB8 (LookCtrl_Ctor 0069E570) -> 00920D70 (ctor 006AB140) -> one per
+// species, made by FUN_0081A800 from FUN_006EFB30(0): 0 -> 00923C88 (ctor 006D6660), 1 -> 009220F8 (006BEB80),
+// else 00922E40 (006C9B60). Live 2026-10-17 (g_PlayerSpecies = the same index): 0 Predator, 1 Alien, 2 Marine.
+// The player's controller is at playerEntity+0x30.
+// Every instance has ctrl+0x60 pointing at ctrl+0x30 or ctrl+0x48 (an embedded input mapping, switched per tick).
+constexpr uintptr_t vt_LookCtrlBase   = 0x0091FAB8;
+constexpr uintptr_t vt_LookCtrlSub    = 0x00920D70;
+constexpr uintptr_t vt_LookCtrlClassA = 0x00923C88; // species index 0: Predator
+constexpr uintptr_t vt_LookCtrlClassB = 0x009220F8; // species index 1: Alien
+constexpr uintptr_t vt_LookCtrlClassC = 0x00922E40; // species index 2: Marine
 
 // ---- Input ----
 constexpr uintptr_t Input_GetActionValue         = 0x0060DED0;
@@ -79,6 +89,13 @@ constexpr uintptr_t Input_ConsumeAction          = 0x0060DF40;
 constexpr uintptr_t Input_PackActionBits         = 0x006256A0;
 constexpr uintptr_t XInput_PollPad               = 0x00645AA0;
 constexpr uintptr_t XInput_SetRumble             = 0x00659FB0;
+
+// ---- Entities ----
+// thiscall(registry, handle, 1) -> entity, RET 8. The local player's entity = Find(g_EntityRegistry, *(g_GameScene + 8),
+// 1); its look controller is at +0x30 (FUN_0081A800), the motion tracker's data at +0x2C (FUN_006EF6A0).
+constexpr uintptr_t EntityRegistry_Find          = 0x004119D0;
+constexpr uintptr_t g_EntityRegistry             = 0x00A6DC80; // object
+constexpr uintptr_t g_GameScene                  = 0x00A71C50; // pointer: Scene_RenderFrame's object (+0x08 player handle)
 
 // ---- Character ----
 constexpr uintptr_t Char_SelectSkinAttachment    = 0x006A6450;
@@ -128,8 +145,8 @@ constexpr uintptr_t g_PlayerProfile        = 0x00A71E14; // pointer
 // keeps it forever (recursion count = stereo frames) and the level loader, which needs it for the new level's GPU
 // resources, waits on it for good: 2026-10-17, every level load after the first of a session hung on the loading screen.
 constexpr uintptr_t g_D3DLock              = 0x00A257FC;
-// Player species index; 2 runs the motion tracker (Scene_RenderFrame's tail call FUN_006EF6A0 -> FUN_006C8810), so the
-// marine. Others not verified.
+// Player species index: 0 Predator, 1 Alien, 2 Marine (live 2026-10-17; 2 runs the motion tracker, Scene_RenderFrame's
+// tail call FUN_006EF6A0 -> FUN_006C8810).
 constexpr uintptr_t g_PlayerSpecies        = 0x009D4BA0; // int
 constexpr uintptr_t g_Console              = 0x009E77A0; // pointer
 constexpr uintptr_t g_ConsoleGateA         = 0x009E1C58; // byte, must be != 0 for the console

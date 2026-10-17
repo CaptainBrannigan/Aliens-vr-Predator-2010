@@ -15,4 +15,7 @@ namespace avp::dashboard {
 // Once, after the SteamVR connection is up. Creates the dashboard overlay and starts its thread.
 void Start(::vr::IVROverlay* overlay);
 
+// Stops the thread (waits up to half a second); no overlay calls after it returns. Before VR_Shutdown.
+void Stop();
+
 } // namespace avp::dashboard

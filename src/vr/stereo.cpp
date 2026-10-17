@@ -1,5 +1,6 @@
 #include "stereo.h"
 
+#include "head_aim.h"
 #include "openvr_session.h"
 #include "../core/addresses.h"
 #include "../core/dev_flags.h"
@@ -43,6 +44,8 @@ vr::Pose g_head{};
 ViewCamera g_base;            // the game's own camera this frame
 bool g_haveRefYaw = false;
 std::atomic<bool> g_recenterRequested{false}; // dashboard button (any thread)
+unsigned g_recenterCount = 0;                  // recenters done (main thread)
+DWORD g_presentThread = 0;
 float g_refYaw = 0.0f;        // head yaw at the first stereo frame (recenter reference)
 unsigned g_stereoFrames = 0;
 float g_gameAspect = 0.0f;         // the game's global aspect (009CCD54) before VR changed it
@@ -107,21 +110,96 @@ void HeadAngles(const vr::Pose& p, float& yaw, float& pitch, float& roll)
     roll = std::atan2(p.m[1][0], p.m[1][1]);                      // + = right side up (head tilted left)
 }
 
+// The head's rotation in the engine's convention, relative to the recenter reference: engine angles (head pitch,
+// signed head yaw, signed head roll) -> the engine's own quaternion -> matrix (columns = right, up, forward).
+void HeadMatrix(const vr::Pose& p, float m[9])
+{
+    float headYaw, headPitch, headRoll;
+    HeadAngles(p, headYaw, headPitch, headRoll);
+    const float angles[3] = {dev::kHeadPitchSign * headPitch, dev::kHeadYawSign * (headYaw - g_refYaw),
+                             dev::kHeadRollSign * headRoll};
+    float q[4];
+    EulerToQuat(angles, q);
+    QuatToRot(q, m);
+}
+
+// c = a * b (3x3, row-major).
+void MatMul(const float a[9], const float b[9], float c[9])
+{
+    for (int r = 0; r < 3; ++r)
+        for (int k = 0; k < 3; ++k)
+            c[r * 3 + k] = a[r * 3 + 0] * b[0 * 3 + k] + a[r * 3 + 1] * b[1 * 3 + k] + a[r * 3 + 2] * b[2 * 3 + k];
+}
+
+// m keeps its forward (column 2); its down axis (column 1) becomes ref's, made perpendicular, and right = down x
+// forward (the engine's column convention). Falls back to m's own down axis if ref's is (nearly) along the forward.
+void ReRoll(float m[9], const float ref[9])
+{
+    const float f[3] = {m[2], m[5], m[8]};
+    float d[3] = {ref[1], ref[4], ref[7]};
+    float k = d[0] * f[0] + d[1] * f[1] + d[2] * f[2];
+    d[0] -= k * f[0];
+    d[1] -= k * f[1];
+    d[2] -= k * f[2];
+    float len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (len < 1e-3f)
+        return;
+    for (float& v : d)
+        v /= len;
+    const float r[3] = {d[1] * f[2] - d[2] * f[1], d[2] * f[0] - d[0] * f[2], d[0] * f[1] - d[1] * f[0]};
+    m[0] = r[0];
+    m[3] = r[1];
+    m[6] = r[2];
+    m[1] = d[0];
+    m[4] = d[1];
+    m[7] = d[2];
+}
+
 // eye 0/1 = left/right; eye -1 = head centre (no offset, frustum covering both eyes scaled by fovScale).
 EyeCamera BuildEye(int eye, float fovScale = 1.0f)
 {
     EyeCamera c{};
-    float headYaw, headPitch, headRoll;
-    HeadAngles(g_head, headYaw, headPitch, headRoll);
-    float relYaw = headYaw - g_refYaw;
-
-    float angles[3];
-    angles[0] = dev::kHeadPitchSign * headPitch + (dev::kAddGamePitch ? g_base.pitch : 0.0f);
-    angles[1] = g_base.yaw + dev::kHeadYawSign * relYaw;
-    angles[2] = dev::kHeadRollSign * headRoll;
-    float q[4];
-    EulerToQuat(angles, q);
-    QuatToRot(q, c.rot);
+    // Orientation. With head aim (vr/head_aim.h) the player frame P -- the body's up (the Alien's surface) and our own
+    // heading -- times the head: view = P * head, the matrix that set the game's look this frame. With
+    // GameCameraBase (default) the game's own camera stays authoritative: it was built from that look frame L, so its
+    // difference D = G * L^T (camera shake, recoil, the Alien's own camera roll and smoothing) is kept on top:
+    // camera = D * P * head. Without head aim (off, or before the first look update): the game's yaw + the head's
+    // angles (first VR builds); that spins on Alien walls, where the game's camera isn't upright.
+    float frame[9], look[9];
+    if (aim::PlayerFrame(frame, look))
+    {
+        float head[9], view[9];
+        HeadMatrix(g_head, head);
+        MatMul(frame, head, view);
+        if (settings::GameCameraBase())
+        {
+            const float lt[9] = {look[0], look[3], look[6], look[1], look[4], look[7], look[2], look[5], look[8]};
+            float d[9];
+            MatMul(g_base.rot, lt, d);
+            MatMul(d, view, c.rot);
+            // The Alien's own camera roll (2026-10-17: it has a roll input) stays out: keep the game camera's
+            // direction, rebuild its roll from our view (columns right, down, forward; right = down x forward).
+            if (settings::AlienRollFromHeadOnly() && Global<int>(addr::g_PlayerSpecies) == 1)
+                ReRoll(c.rot, view);
+        }
+        else
+        {
+            std::memcpy(c.rot, view, sizeof(view));
+        }
+    }
+    else
+    {
+        float headYaw, headPitch, headRoll;
+        HeadAngles(g_head, headYaw, headPitch, headRoll);
+        const float relYaw = headYaw - g_refYaw;
+        float angles[3];
+        angles[0] = dev::kHeadPitchSign * headPitch + (dev::kAddGamePitch ? g_base.pitch : 0.0f);
+        angles[1] = g_base.yaw + dev::kHeadYawSign * relYaw;
+        angles[2] = dev::kHeadRollSign * headRoll;
+        float q[4];
+        EulerToQuat(angles, q);
+        QuatToRot(q, c.rot);
+    }
 
     // Eye position: base position + camera right axis (rotation column 0) * the eye's half-IPD.
     vr::EyeGeometry g = vr::Eye(eye < 0 ? 0 : eye);
@@ -276,7 +354,10 @@ void __fastcall CamApplyReplacement(void* self, void* /*edx*/, void* entity)
 
     std::memcpy(&g_base, &ViewCameras()[0], sizeof(ViewCamera));
     if (g_recenterRequested.exchange(false))
+    {
         g_haveRefYaw = false;
+        ++g_recenterCount; // head aim keeps the current look heading (vr/head_aim.cpp)
+    }
     if (!g_haveRefYaw)
     {
         float y, p, r;
@@ -319,10 +400,42 @@ void RequestRecenter() { g_recenterRequested.store(true); }
 
 bool InEyeRender() { return g_hudPanelActive; }
 
+void EngineEulerMatrix(const float angles[3], float m[9])
+{
+    float q[4];
+    EulerToQuat(angles, q);
+    QuatToRot(q, m);
+}
+
+bool HeadRotation(float m[9])
+{
+    if (!g_head.valid || !g_haveRefYaw)
+        return false;
+    HeadMatrix(g_head, m);
+    return true;
+}
+
+unsigned RecenterCount() { return g_recenterCount; }
+
+unsigned long PresentThread() { return g_presentThread; }
+
+bool HeadAnglesDeg(float out[3])
+{
+    if (!g_head.valid)
+        return false;
+    float yaw, pitch, roll;
+    HeadAngles(g_head, yaw, pitch, roll);
+    out[0] = (yaw - g_refYaw) * 57.29578f;
+    out[1] = pitch * 57.29578f;
+    out[2] = roll * 57.29578f;
+    return true;
+}
+
 bool StereoActive() { return g_lastStereoTick && GetTickCount() - g_lastStereoTick < 500; }
 
 void OnPresent(IDXGISwapChain*, unsigned& syncInterval)
 {
+    g_presentThread = GetCurrentThreadId();
     vr::TryConnect();
     if (!dev::kVrEnabled || !vr::IsConnected())
         return;

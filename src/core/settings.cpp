@@ -47,14 +47,30 @@ const char* HidePassLabel(int i) { return i <= 0 ? "off" : HudPassLabel(i - 1); 
 // Order = display order; entries of a group must be contiguous.
 const Entry kEntries[] = {
     {"IpdScale", "View", "Eye distance (IPD) scale", Kind::Number, 1.0f, 0.5f, 2.0f, 0.02f, 2, "x", nullptr},
+    {"GameCameraBase", "View", "Keep the game camera's motion (shake, recoil)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
+     nullptr},
+    {"AlienRollFromHeadOnly", "View", "Alien: camera roll from your head only", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
+     nullptr},
     {"HudPanel", "HUD", "HUD in a panel (off = full view)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"HudWidthDeg", "HUD", "HUD size (width)", Kind::Number, 60.0f, 20.0f, 110.0f, 1.0f, 0, "deg", nullptr},
     {"HudDistance", "HUD", "HUD distance", Kind::Number, 2.5f, 0.5f, 20.0f, 0.1f, 1, "m", nullptr},
     {"HudHeightDeg", "HUD", "HUD height (+ up)", Kind::Number, 0.0f, -30.0f, 30.0f, 0.5f, 1, "deg", nullptr},
     {"HideDuplicateTracker", "HUD", "Hide the duplicate motion tracker", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
+    {"HideMarineReticle", "HUD", "Hide the reticle (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
+    {"HeadAim", "Controls", "Head aim (your head aims)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
+    {"TurnSpeedDeg", "Controls", "Turn speed (right stick)", Kind::Number, 150.0f, 30.0f, 360.0f, 5.0f, 0, "deg/s",
+     nullptr},
     {"StickFullDeflection", "Controls", "Stick counts as full at", Kind::Number, 0.95f, 0.5f, 1.0f, 0.01f, 2, "",
      nullptr},
-    {"TurnSpeed", "Controls", "Look speed (right stick)", Kind::Number, 1.0f, 0.2f, 3.0f, 0.05f, 2, "x", nullptr},
+    {"TurnSpeed", "Controls", "Game look speed (head aim off)", Kind::Number, 1.0f, 0.2f, 3.0f, 0.05f, 2, "x",
+     nullptr},
+    {"MarineAimUp", "Aim offsets", "Marine aim up", Kind::Number, 0.0f, -15.0f, 15.0f, 0.25f, 2, "deg", nullptr},
+    {"MarineAimRight", "Aim offsets", "Marine aim right", Kind::Number, 0.0f, -15.0f, 15.0f, 0.25f, 2, "deg", nullptr},
+    {"AlienAimUp", "Aim offsets", "Alien aim up", Kind::Number, 0.0f, -15.0f, 15.0f, 0.25f, 2, "deg", nullptr},
+    {"AlienAimRight", "Aim offsets", "Alien aim right", Kind::Number, 0.0f, -15.0f, 15.0f, 0.25f, 2, "deg", nullptr},
+    {"PredatorAimUp", "Aim offsets", "Predator aim up", Kind::Number, 0.0f, -15.0f, 15.0f, 0.25f, 2, "deg", nullptr},
+    {"PredatorAimRight", "Aim offsets", "Predator aim right", Kind::Number, 0.0f, -15.0f, 15.0f, 0.25f, 2, "deg",
+     nullptr},
     {"DebugHidePass", "Debug", "Hide pass", Kind::Choice, 0.0f, 0.0f, static_cast<float>(kHudPassCount + 1), 1.0f, 0, "",
      &HidePassLabel},
     {"DebugHideDraw", "Debug", "Hide only draw # of it (0 = all)", Kind::Number, 0.0f, 0.0f, 999.0f, 1.0f, 0, "",
@@ -67,13 +83,24 @@ constexpr int kCount = static_cast<int>(sizeof(kEntries) / sizeof(kEntries[0]));
 enum Index
 {
     kIpdScale,
+    kGameCameraBase,
+    kAlienRollFromHeadOnly,
     kHudPanel,
     kHudWidthDeg,
     kHudDistance,
     kHudHeightDeg,
     kHideDuplicateTracker,
+    kHideMarineReticle,
+    kHeadAim,
+    kTurnSpeedDeg,
     kStickFullDeflection,
     kTurnSpeed,
+    kMarineAimUp,
+    kMarineAimRight,
+    kAlienAimUp,
+    kAlienAimRight,
+    kPredatorAimUp,
+    kPredatorAimRight,
     kDebugHidePass,
     kDebugHideDraw,
 };
@@ -179,6 +206,20 @@ float HudDistance() { return g_values[kHudDistance].load(std::memory_order_relax
 float HudHeightDeg() { return g_values[kHudHeightDeg].load(std::memory_order_relaxed); }
 
 
+bool GameCameraBase() { return g_values[kGameCameraBase].load(std::memory_order_relaxed) != 0.0f; }
+bool AlienRollFromHeadOnly() { return g_values[kAlienRollFromHeadOnly].load(std::memory_order_relaxed) != 0.0f; }
+bool HideMarineReticle() { return g_values[kHideMarineReticle].load(std::memory_order_relaxed) != 0.0f; }
+
+void AimOffsetDeg(int species, float* up, float* right)
+{
+    // g_PlayerSpecies: 0 Predator, 1 Alien, 2 Marine.
+    const int u = species == 0 ? kPredatorAimUp : species == 1 ? kAlienAimUp : species == 2 ? kMarineAimUp : -1;
+    *up = u >= 0 ? g_values[u].load(std::memory_order_relaxed) : 0.0f;
+    *right = u >= 0 ? g_values[u + 1].load(std::memory_order_relaxed) : 0.0f;
+}
+
+bool HeadAim() { return g_values[kHeadAim].load(std::memory_order_relaxed) != 0.0f; }
+float TurnSpeedDeg() { return g_values[kTurnSpeedDeg].load(std::memory_order_relaxed); }
 float StickFullDeflection() { return g_values[kStickFullDeflection].load(std::memory_order_relaxed); }
 float TurnSpeed() { return g_values[kTurnSpeed].load(std::memory_order_relaxed); }
 int DebugHidePass() { return static_cast<int>(g_values[kDebugHidePass].load(std::memory_order_relaxed)) - 1; }

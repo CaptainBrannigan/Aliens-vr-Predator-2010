@@ -27,7 +27,11 @@ struct PadAction
     const char* defaultPath;  // oculus_touch input, nullptr = unbound by default
     const char* defaultMode;  // "button" / "joystick"
     const char* defaultInput; // "click", "double" (double press), "long" (long press), "touch"
+    unsigned holdMs = 0;      // > 0: the pad button only once the action has been held this long (timed here)
 };
+// Start on a held right thumbrest (2026-10-17, replacing MOHW's long Y): the thumbrest is touch-only and SteamVR's
+// long press needs a click, so the hold is timed here. The same touch is also RB, held meanwhile.
+constexpr unsigned kStartHoldMs = 800;
 const PadAction kPadActions[] = {
     {"A", "A", 0x1000, "/user/hand/right/input/a", "button", "click"},
     {"B", "B", 0x2000, "/user/hand/right/input/b", "button", "click"},
@@ -39,7 +43,9 @@ const PadAction kPadActions[] = {
     {"DpadDown", "D-pad down", 0x0002, "/user/hand/right/input/a", "button", "double"},
     {"DpadLeft", "D-pad left", 0x0004, "/user/hand/left/input/x", "button", "double"},
     {"DpadRight", "D-pad right", 0x0008, "/user/hand/right/input/b", "button", "double"},
-    {"Start", "Start / pause", 0x0010, "/user/hand/left/input/y", "button", "long"},
+    {"Start", "Start / pause", 0x0010, nullptr, nullptr, nullptr},
+    {"StartHold", "Start / pause (hold 0.8 s)", 0x0010, "/user/hand/right/input/thumbrest", "button", "touch",
+     kStartHoldMs},
     {"Back", "Back", 0x0020, nullptr, nullptr, nullptr},
     // The Touch (Quest 3: Touch Plus) thumbrest is capacitive only: touching it holds the bumper.
     {"LB", "Left bumper", 0x0100, "/user/hand/left/input/thumbrest", "button", "touch"},
@@ -111,7 +117,7 @@ struct DefaultBinding
 constexpr const char* kHoldLongPressDelay = "0.3";
 
 // The default Touch binding, one source per path + mode (a button can carry several inputs: A = click A + double D-pad
-// down).
+// down); an input bound to two actions (right thumbrest touch = RB and Start-hold) gets a second source.
 std::string BuildTouchBindings()
 {
     std::vector<DefaultBinding> bindings = {
@@ -132,12 +138,14 @@ std::string BuildTouchBindings()
     {
         if (done[i])
             continue;
-        std::string inputs, clickOutput;
+        std::string inputs, clickOutput, usedInputs = ",";
         bool hasDouble = false, hasLong = false;
         for (size_t j = i; j < bindings.size(); ++j)
-            if (!done[j] && bindings[j].path == bindings[i].path && bindings[j].mode == bindings[i].mode)
+            if (!done[j] && bindings[j].path == bindings[i].path && bindings[j].mode == bindings[i].mode &&
+                usedInputs.find("," + bindings[j].input + ",") == std::string::npos)
             {
                 done[j] = true;
+                usedInputs += bindings[j].input + ",";
                 if (!inputs.empty())
                     inputs += ", ";
                 inputs += "\"" + bindings[j].input + "\": { \"output\": \"" + bindings[j].output + "\" }";
@@ -351,9 +359,18 @@ void Update()
     static ULONGLONG heldUntil[kPadActionCount] = {};
     const ULONGLONG now = GetTickCount64();
     unsigned buttons = 0;
+    static ULONGLONG downSince[kPadActionCount] = {};
     for (int i = 0; i < kPadActionCount; ++i)
     {
-        const bool down = Digital(g_pad[i]);
+        bool down = Digital(g_pad[i]);
+        if (kPadActions[i].holdMs)
+        {
+            if (!down)
+                downSince[i] = 0;
+            else if (!downSince[i])
+                downSince[i] = now;
+            down = down && now - downSince[i] >= kPadActions[i].holdMs;
+        }
         if (down && now >= heldUntil[i])
             heldUntil[i] = now + kPadMinHoldMs;
         if (down || now < heldUntil[i])
@@ -390,6 +407,13 @@ void Update()
         nextControllerLog = ~0ull;
         LogControllers();
     }
+}
+
+void Shutdown()
+{
+    g_ready = false;
+    g_havePad.store(false, std::memory_order_release);
+    AVP_LOG(kLog, "SteamVR Input stopped");
 }
 
 bool GetPad(PadState* out)

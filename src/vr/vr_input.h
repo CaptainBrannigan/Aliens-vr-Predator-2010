@@ -7,8 +7,8 @@
 // Every pad control is its own SteamVR action ("Gamepad: A" ...); the game resolves them per species and context
 // itself, exactly as with a real pad. Default Touch layout: sticks = sticks (and their clicks), triggers = LT / RT
 // (analog), A / B / X / Y = A / B / X / Y, thumbrest touch = LB (left) / RB (right), D-pad on double presses
-// (X = left, Y = up, B = right, A = down), Start on a long Y press; Back unbound. Grips and hand poses are declared
-// for the motion-control work to come but drive nothing yet.
+// (X = left, Y = up, B = right, A = down), Start on a held right thumbrest (0.8 s); Back unbound. Grips and hand
+// poses are declared for the motion-control work to come but drive nothing yet.
 //
 // Log: avpvr_input.log.
 
@@ -24,6 +24,9 @@ void Init(::vr::IVRInput* input, ::vr::IVRSystem* system);
 
 // Main thread, once per frame, right after WaitGetPoses.
 void Update();
+
+// Main thread: no more IVRInput calls (before VR_Shutdown); the virtual pad goes idle.
+void Shutdown();
 
 // The virtual pad, for hooks/xinput_hook.cpp (any thread, lock-free). False until the first update.
 struct PadState

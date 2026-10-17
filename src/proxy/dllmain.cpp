@@ -14,12 +14,14 @@
 #include "../core/log.h"
 #include "../core/settings.h"
 #include "../hooks/d3d_probe.h"
+#include "../hooks/quit_hook.h"
 #include "../hooks/render_twice_experiment.h"
 #include "../hooks/snapshot.h"
 #include "../hooks/trace_hooks.h"
 #include "../hooks/two_view_experiment.h"
 #include "../hooks/vmt_shadow.h"
 #include "../hooks/xinput_hook.h"
+#include "../vr/head_aim.h"
 #include "../vr/stereo.h"
 
 #include <MinHook.h>
@@ -71,12 +73,14 @@ void InitializeMod()
     avp::InstallExitHooks();
     avp::settings::Load(); // avpvr_settings.ini (adjusted in the SteamVR dashboard's AvP VR tab)
     avp::InstallXInputHook(); // virtual pad 0 from the motion controllers -- see avpvr_xinput.log
+    avp::InstallQuitHook();   // clean SteamVR shutdown when the game quits
 
     const int hooks = avp::InstallTraceHooks();
     AVP_LOG(kLog, "%d trace hooks installed -- see avpvr_trace.log", hooks);
     avp::StartTraceSummaryThread();
     avp::StartSnapshotThread();
     avp::stereo::Register(); // camera-apply replacement in the shadow vtables (VR eye cameras)
+    avp::aim::Register();    // head aim: look controller SetLookDirection -- see avpvr_aim.log
     avp::StartVmtShadow(); // per-object shadow vtables (CEG-safe virtual hooks) -- see avpvr_shadow.log
     avp::StartD3DProbe();  // draw/viewport/present counts from hooks in d3d11/dxgi -- see avpvr_d3d.log
     avp::StartRenderTwiceExperiment();

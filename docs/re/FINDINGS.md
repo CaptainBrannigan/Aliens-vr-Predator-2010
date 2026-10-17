@@ -79,8 +79,45 @@ the game renders two viewports. If it does, that's a native two-eye render path,
 ## 2. Player look / aim (high confidence on roles, offsets need live check)
 
 Look-controller base class: vtable `0091FAB8` (ctor `FUN_0069e570`, registers `Controls.*` sensitivity/aim-assist cvars).
-Concrete subclass: vtable `00920D70`; three more share the main look methods (`009220F8`, `00922E40`, `00923C88`)
-— likely Marine / Alien / Predator.
+Intermediate `00920D70` (ctor `006AB140`), then one class per species, made by `FUN_0081A800` (which recreates the
+player's controller whenever the connected-pad count changes, stored at `playerEntity+0x30`): **Predator `00923C88`,
+Alien `009220F8`, Marine `00922E40`** (live 2026-10-17; `g_PlayerSpecies` `009D4BA0` = 0 / 1 / 2). Every instance has
+`ctrl+0x60` pointing at `ctrl+0x30` or `ctrl+0x48` (the shadow-vtable validator).
+
+**Live (2026-10-17, log-only shadow hook on `+0x9C`, `src/hooks/look_probe.cpp`) — corrections to the table below:**
+- `SetLookDirection` runs ~115 times a second (every rendered frame), always from `UpdateLook` (`006ADE3A`).
+- Its argument is a **world-space unit direction (x, y, z, 0)**, not a quaternion. **The engine's world y points
+  DOWN** (y > 0 = looking down; matrix column 1 -- camera and body -- is the "down" axis, the projection's negative
+  P11 flips it back for the screen; OpenVR -> engine is a 180-degree turn about x, hence head yaw -1 / pitch +1 /
+  roll -1). Engine angles: + pitch = up, + yaw = right.
+- `ctrl+0x20` = **pitch** input (actions 1 + 3, where invert-Y applies), `ctrl+0x24` = **yaw** input (actions 0 + 2).
+- No stored yaw/pitch: each tick starts from the character's current look in the **body frame** — a 3x3 from the
+  character's virtual base (`character + 4 + vbtable[2]`, vtable `+0x0C`, zero-argument thiscall; local = M^T world,
+  M's columns = body axes) — adds the stick deltas, clamps, and transforms back. The same orientation is a quaternion
+  at `[character+0x3C] + 0xA8`.
+- Pitch limits relative to the body (UpdateLook clamps asin(-y_local) to [-(90° − `+0xD4`), 90° − `+0xD0`]):
+  up 90° − `+0xD0`, down 90° − `+0xD4`: Marine 85 up / 75 down, Predator 85 up / 80 down.
+  **Yaw relative to the body is capped at about ±90°; past it the body itself turns** (all species).
+- Marine / Predator: body down axis = world down (0, 1, 0). **Alien: the body frame follows the surface** (walls:
+  rotated; ceiling: down axis (0, −1, 0), i.e. feet towards the ceiling); the look stays constant in body-local terms
+  while the body rotates onto a new surface.
+- The Alien's tutorial "look around" objective reads the render camera (it passed with head pitch, not stick pitch,
+  while the VR camera ignored the game's pitch); the Marine's reads the look.
+
+**Head aim (2026-10-17, `src/vr/head_aim.cpp`):** `+0x9C` replaced in the three species' shadow vtables. The mod keeps
+a player frame (up = the body's up, heading turned only by the right stick and carried across surface changes) and
+hands the original setter forward(frame × head), clamped to the controller's pitch limits; the eye cameras use the same
+matrix. Only the **local player's** controller is steered: `EntityRegistry_Find` (`004119D0`, thiscall on
+`00A6DC80`, `(handle, 1)`, `RET 8`) with the handle at `[g_GameScene (00A71C50)] + 8` gives the player entity, its
+controller at `+0x30`; other controllers (other players' characters in multiplayer) are left alone.
+
+**Netcode (static, 2026-10-17): open.** Network strings cover only connection management (Asura NetLink status and
+connect/disconnect, `Network.TimeoutMilliseconds`, a `NetSim` latency / packet-loss simulator with console commands)
+-- nothing on what a client sends for its look. Head aim goes through the game's own setter (stored at `ctrl+0x70`,
+pushed to the character via `+0xB4`), so state-based replication (the usual "client sends its view direction")
+carries it; if the host re-simulated look from stick input instead, it would see the game's own stick look. Next:
+the character's `+0xB0/+0xB4` (vtable logged in `avpvr_aim.log` at activation) and their readers, and a live
+two-player check.
 
 | Function | Role |
 |---|---|

@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <openvr.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -44,6 +45,8 @@ struct HitBox
 constexpr int kRecenterButton = -100;
 
 ::vr::IVROverlay* g_overlay = nullptr;
+std::atomic<bool> g_stop{false};
+HANDLE g_stopped = nullptr; // set by the thread on exit
 ::vr::VROverlayHandle_t g_main = ::vr::k_ulOverlayHandleInvalid;
 ::vr::VROverlayHandle_t g_thumb = ::vr::k_ulOverlayHandleInvalid;
 
@@ -53,7 +56,7 @@ int g_hover = -1;
 
 int ColumnForGroup(const char* group)
 {
-    return strcmp(group, "Controls") == 0 || strcmp(group, "Debug") == 0 ? 1 : 0;
+    return strcmp(group, "Controls") == 0 || strcmp(group, "Aim offsets") == 0 || strcmp(group, "Debug") == 0 ? 1 : 0;
 }
 
 class Canvas
@@ -273,7 +276,7 @@ void ThreadProc()
 
     bool dirty = true;
     ULONGLONG lastDraw = 0;
-    for (;;)
+    while (!g_stop.load())
     {
         ::vr::VREvent_t ev{};
         for (;;)
@@ -322,6 +325,7 @@ void ThreadProc()
         }
         Sleep(visible ? 15 : 100);
     }
+    SetEvent(g_stopped);
 }
 
 } // namespace
@@ -347,8 +351,17 @@ void Start(::vr::IVROverlay* overlay)
     if (err != ::vr::VROverlayError_None)
         return;
     g_overlay = overlay;
+    g_stopped = CreateEventA(nullptr, TRUE, FALSE, nullptr);
     std::thread(ThreadProc).detach();
     AVP_LOG(kLog, "dashboard tab ready (%d settings)", settings::MenuCount());
+}
+
+void Stop()
+{
+    if (!g_overlay || g_stop.exchange(true))
+        return;
+    const DWORD r = g_stopped ? WaitForSingleObject(g_stopped, 500) : WAIT_FAILED;
+    AVP_LOG(kLog, "dashboard thread %s", r == WAIT_OBJECT_0 ? "stopped" : "did not stop in time");
 }
 
 } // namespace avp::dashboard
