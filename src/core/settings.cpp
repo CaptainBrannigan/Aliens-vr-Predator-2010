@@ -49,8 +49,7 @@ const Entry kEntries[] = {
     {"IpdScale", "View", "Eye distance (IPD) scale", Kind::Number, 1.0f, 0.5f, 2.0f, 0.02f, 2, "x", nullptr},
     {"GameCameraBase", "View", "Keep the game camera's motion (shake, recoil)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
      nullptr},
-    {"AlienRollFromHeadOnly", "View", "Alien: camera roll from your head only", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
-     nullptr},
+    {"RollFromHeadOnly", "View", "Camera roll from your head only", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"HudPanel", "HUD", "HUD in a panel (off = full view)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"HudWidthDeg", "HUD", "HUD size (width)", Kind::Number, 60.0f, 20.0f, 110.0f, 1.0f, 0, "deg", nullptr},
     {"HudDistance", "HUD", "HUD distance", Kind::Number, 2.5f, 0.5f, 20.0f, 0.1f, 1, "m", nullptr},
@@ -71,6 +70,7 @@ const Entry kEntries[] = {
     {"PredatorAimUp", "Aim offsets", "Predator aim up", Kind::Number, 0.0f, -15.0f, 15.0f, 0.25f, 2, "deg", nullptr},
     {"PredatorAimRight", "Aim offsets", "Predator aim right", Kind::Number, 0.0f, -15.0f, 15.0f, 0.25f, 2, "deg",
      nullptr},
+
     {"DebugHidePass", "Debug", "Hide pass", Kind::Choice, 0.0f, 0.0f, static_cast<float>(kHudPassCount + 1), 1.0f, 0, "",
      &HidePassLabel},
     {"DebugHideDraw", "Debug", "Hide only draw # of it (0 = all)", Kind::Number, 0.0f, 0.0f, 999.0f, 1.0f, 0, "",
@@ -84,7 +84,7 @@ enum Index
 {
     kIpdScale,
     kGameCameraBase,
-    kAlienRollFromHeadOnly,
+    kRollFromHeadOnly,
     kHudPanel,
     kHudWidthDeg,
     kHudDistance,
@@ -101,6 +101,7 @@ enum Index
     kAlienAimRight,
     kPredatorAimUp,
     kPredatorAimRight,
+
     kDebugHidePass,
     kDebugHideDraw,
 };
@@ -207,7 +208,7 @@ float HudHeightDeg() { return g_values[kHudHeightDeg].load(std::memory_order_rel
 
 
 bool GameCameraBase() { return g_values[kGameCameraBase].load(std::memory_order_relaxed) != 0.0f; }
-bool AlienRollFromHeadOnly() { return g_values[kAlienRollFromHeadOnly].load(std::memory_order_relaxed) != 0.0f; }
+bool RollFromHeadOnly() { return g_values[kRollFromHeadOnly].load(std::memory_order_relaxed) != 0.0f; }
 bool HideMarineReticle() { return g_values[kHideMarineReticle].load(std::memory_order_relaxed) != 0.0f; }
 
 void AimOffsetDeg(int species, float* up, float* right)
@@ -222,6 +223,7 @@ bool HeadAim() { return g_values[kHeadAim].load(std::memory_order_relaxed) != 0.
 float TurnSpeedDeg() { return g_values[kTurnSpeedDeg].load(std::memory_order_relaxed); }
 float StickFullDeflection() { return g_values[kStickFullDeflection].load(std::memory_order_relaxed); }
 float TurnSpeed() { return g_values[kTurnSpeed].load(std::memory_order_relaxed); }
+
 int DebugHidePass() { return static_cast<int>(g_values[kDebugHidePass].load(std::memory_order_relaxed)) - 1; }
 bool HideDuplicateTracker() { return g_values[kHideDuplicateTracker].load(std::memory_order_relaxed) != 0.0f; }
 int DebugHideDraw() { return static_cast<int>(g_values[kDebugHideDraw].load(std::memory_order_relaxed)); }

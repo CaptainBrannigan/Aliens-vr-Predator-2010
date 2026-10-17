@@ -52,6 +52,13 @@ constexpr uintptr_t Frame_EndFrame               = 0x0080A0E0; // -> Render_EndF
 // cdecl() -> bool: (paused 009E14A8 || time scale 009E1484 <= 0) && menu up (FUN_0079C4D0) && !00A71E27.
 // Scene_RenderFrame skips a player draw step when it's true. VR: in-game menu frames go to the flat screen.
 constexpr uintptr_t Game_IsPausedWithMenu        = 0x0080A450;
+// Its parts: any GUI screen up that isn't a whitelisted HUD screen; the pause flag; the time scale; a third flag.
+// Multiplayer doesn't stop time, so its pause menu doesn't count as "paused" (2026-10-17: the MP pause menu rendered
+// in the eyes, cut off) -- the state is logged on change (avpvr_stereo.log) before deciding a fix.
+constexpr uintptr_t Gui_IsMenuScreenUp           = 0x0079C4D0; // cdecl() -> bool
+constexpr uintptr_t g_GamePaused                 = 0x009E14A8; // byte
+constexpr uintptr_t g_TimeScale                  = 0x009E1484; // float
+constexpr uintptr_t g_PauseMenuBlock             = 0x00A71E27; // byte, must be 0 for Game_IsPausedWithMenu
 
 // ---- Multi-view ----
 constexpr uintptr_t View_ForEachUpdateObjects    = 0x00662780;

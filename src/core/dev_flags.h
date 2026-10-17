@@ -72,9 +72,7 @@ constexpr float kHeadPitchSign = 1.0f; // engine pitch direction vs. looking up 
 // (-1, +1, -1) is the exact mapping for any head orientation. The "roll looks wrong" reports at -1 came from the
 // horizontal projection mismatch (fixed via the global aspect), not the sign.
 constexpr float kHeadRollSign = -1.0f;
-// The camera left in place between frames (for the engine's pre-camera-update visibility work) has this much wider
-// a frustum than the eyes (tangent scale), so head motion during the next frame's update stays covered.
-constexpr float kPersistentCameraFovMargin = 1.3f;
+
 // DIAGNOSTIC: force the engine's Visibility.RenderEverything cvar on while VR runs, to tell whether the remaining
 // edge culling comes from the visibility system (deciding with the game's own camera) or from something else.
 // Off again: the culling at the eye edges was the culling frustum (+0xEC/+0xFC) being narrower than the actual

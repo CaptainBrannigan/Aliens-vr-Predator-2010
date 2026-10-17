@@ -73,6 +73,24 @@ DWORD g_lastStereoTick = 0; // last stereo frame's camera apply
 
 using PFN_IsPausedMenu = bool(__cdecl*)();
 const auto IsPausedWithMenu = reinterpret_cast<PFN_IsPausedMenu>(addr::Game_IsPausedWithMenu);
+const auto IsMenuScreenUp = reinterpret_cast<PFN_IsPausedMenu>(addr::Gui_IsMenuScreenUp);
+
+// The pause-menu decision's inputs, logged whenever they change (multiplayer pause menu investigation).
+void LogMenuState(bool pausedWithMenu)
+{
+    const bool menuUp = IsMenuScreenUp();
+    const bool paused = Global<uint8_t>(addr::g_GamePaused) != 0;
+    const float timeScale = Global<float>(addr::g_TimeScale);
+    const bool block = Global<uint8_t>(addr::g_PauseMenuBlock) != 0;
+    const int state = (menuUp ? 1 : 0) | (paused ? 2 : 0) | (timeScale <= 0.0f ? 4 : 0) | (block ? 8 : 0) |
+                      (pausedWithMenu ? 16 : 0);
+    static int last = -1;
+    if (state == last)
+        return;
+    last = state;
+    AVP_LOG(kLog, "menu state: GUI menu screen up %d, paused %d, time scale %.2f, block flag %d -> paused with menu %d",
+            menuUp, paused, timeScale, block, pausedWithMenu);
+}
 
 // ---- Engine angle convention: (pitch, yaw, roll), exact copies of FUN_004EFD20 / Cam_SetRotationQuat ----
 void EulerToQuat(const float a[3], float q[4])
@@ -155,8 +173,8 @@ void ReRoll(float m[9], const float ref[9])
     m[7] = d[2];
 }
 
-// eye 0/1 = left/right; eye -1 = head centre (no offset, frustum covering both eyes scaled by fovScale).
-EyeCamera BuildEye(int eye, float fovScale = 1.0f)
+// eye 0 = left, 1 = right.
+EyeCamera BuildEye(int eye)
 {
     EyeCamera c{};
     // Orientation. With head aim (vr/head_aim.h) the player frame P -- the body's up (the Alien's surface) and our own
@@ -177,9 +195,10 @@ EyeCamera BuildEye(int eye, float fovScale = 1.0f)
             float d[9];
             MatMul(g_base.rot, lt, d);
             MatMul(d, view, c.rot);
-            // The Alien's own camera roll (2026-10-17: it has a roll input) stays out: keep the game camera's
-            // direction, rebuild its roll from our view (columns right, down, forward; right = down x forward).
-            if (settings::AlienRollFromHeadOnly() && Global<int>(addr::g_PlayerSpecies) == 1)
+            // The game camera's own roll stays out (2026-10-17: the Alien has a roll input; same for every species
+            // since): keep the game camera's direction, rebuild its roll from our view (columns right, down, forward;
+            // right = down x forward).
+            if (settings::RollFromHeadOnly())
                 ReRoll(c.rot, view);
         }
         else
@@ -202,30 +221,15 @@ EyeCamera BuildEye(int eye, float fovScale = 1.0f)
     }
 
     // Eye position: base position + camera right axis (rotation column 0) * the eye's half-IPD.
-    vr::EyeGeometry g = vr::Eye(eye < 0 ? 0 : eye);
-    if (eye < 0)
-    {
-        // Head centre: union of both eyes' frusta (the right eye mirrors the left), no offset.
-        const vr::EyeGeometry& r = vr::Eye(1);
-        g.tanLeft = std::fmin(g.tanLeft, r.tanLeft);
-        g.tanRight = std::fmax(g.tanRight, r.tanRight);
-        g.tanTop = std::fmin(g.tanTop, r.tanTop);
-        g.tanBottom = std::fmax(g.tanBottom, r.tanBottom);
-        g.offset[0] = 0.0f;
-    }
+    const vr::EyeGeometry& g = vr::Eye(eye);
     const float side = g.offset[0] * dev::kWorldUnitsPerMeter * settings::IpdScale() * dev::kEyeRightSign;
     c.pos[0] = g_base.pos[0] + c.rot[0] * side;
     c.pos[1] = g_base.pos[1] + c.rot[3] * side;
     c.pos[2] = g_base.pos[2] + c.rot[6] * side;
 
     // Symmetric frustum covering the eye's asymmetric one; Submit bounds crop it back.
-    float tanH = (std::fabs(g.tanLeft) > std::fabs(g.tanRight) ? std::fabs(g.tanLeft) : std::fabs(g.tanRight));
-    float tanV = (std::fabs(g.tanTop) > std::fabs(g.tanBottom) ? std::fabs(g.tanTop) : std::fabs(g.tanBottom));
-    if (eye < 0)
-    {
-        tanH *= fovScale;
-        tanV *= fovScale;
-    }
+    const float tanH = (std::fabs(g.tanLeft) > std::fabs(g.tanRight) ? std::fabs(g.tanLeft) : std::fabs(g.tanRight));
+    const float tanV = (std::fabs(g.tanTop) > std::fabs(g.tanBottom) ? std::fabs(g.tanTop) : std::fabs(g.tanBottom));
     c.fullHFov = 2.0f * std::atan(tanH);
     c.aspect = tanH / tanV;
     // OpenVR's raw projection: the image's TOP edge is at tan = tanBottom and its bottom edge at tan = tanTop (y up;
@@ -244,7 +248,7 @@ EyeCamera BuildEye(int eye, float fovScale = 1.0f)
     const float hudTanW = std::tan(settings::HudWidthDeg() * 0.5f * kDeg);
     const float hudTanH = hudTanW * (9.0f / 16.0f);
     const float distance = settings::HudDistance() > 0.1f ? settings::HudDistance() : 0.1f;
-    const float centreTanX = eye < 0 ? 0.0f : -g.offset[0] / distance;
+    const float centreTanX = -g.offset[0] / distance;
     const float centreTanY = std::tan(settings::HudHeightDeg() * kDeg);
     const float centreU = 0.5f + 0.5f * centreTanX / tanH;
     const float centreV = 0.5f - 0.5f * centreTanY / tanV; // v = 0 is the top
@@ -341,7 +345,9 @@ void __fastcall CamApplyReplacement(void* self, void* /*edx*/, void* entity)
         return;
     // Cutscenes and the in-game (pause) menu go to the flat screen -- with the game's own aspect and HUD viewport
     // already back for this frame's render.
-    if (Global<uint8_t>(addr::g_CinematicActive) || IsPausedWithMenu())
+    const bool pausedWithMenu = IsPausedWithMenu();
+    LogMenuState(pausedWithMenu);
+    if (Global<uint8_t>(addr::g_CinematicActive) || pausedWithMenu)
     {
         RestoreGameAspect();
         return;
@@ -478,11 +484,14 @@ void OnPresent(IDXGISwapChain*, unsigned& syncInterval)
         if (g_stereoFrames++ < 3 || g_stereoFrames % 600 == 0)
             LogFrame(left, right);
 
-        // Leave a head-centred, wider camera in place until the game's next camera update overwrites it: parts of the
-        // engine's visibility work (per-frame visibility caches, LOD/animation culling) run during the next frame's
-        // update, BEFORE the camera apply. With the game's own camera restored here (first build), they culled for the
-        // game camera's direction, and objects popped at the eye edges whenever the head pointed elsewhere.
-        ApplyEye(BuildEye(-1, dev::kPersistentCameraFovMargin));
+        // Give the game its own camera (and aspect) back until its next camera update: game logic between frames
+        // reads view 0. 2026-10-17: with a wide head-centred camera left there instead, the Predator's "look at"
+        // objective never completed in VR (whatever turned the view); with the game's camera it does, and no pop-in.
+        // (That wide camera was added before the projection fix and head aim, against pop-in at the eye edges that
+        // came from those bugs: the culling frustum narrower than the drawing, the game camera pointing elsewhere.)
+        std::memcpy(&ViewCameras()[0], &g_base, sizeof(ViewCamera));
+        RestoreGameAspect();
+        Global<uint8_t>(addr::g_CameraDirty) = 1;
 
         vr::HideScreen();
         vr::SubmitEyes(g_eyeTex[0], left.bounds, g_eyeTex[1], right.bounds);

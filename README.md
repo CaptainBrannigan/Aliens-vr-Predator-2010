@@ -3,11 +3,12 @@
 A VR mod for **Aliens vs Predator (2010)**, the DX11 executable (`AvP_DX11.exe`, Steam build), through in-process
 32-bit SteamVR. Loaded as a `dxgi.dll` proxy from the game folder. Progress and plans: `docs/ROADMAP.md`.
 
-## Status (2026-10-17)
+## Status: v0.1 (2026-10-17)
 
-Working, verified in the headset:
-- **Stereo** for Marine and Predator: the game renders twice per frame (left eye, then the right eye from the
-  Present hook), each eye with its own asymmetric frustum and head orientation; full 3D world, lighting, culling.
+**Head look and stereo are complete** for all three species, single player and multiplayer (multiplayer not yet
+tested with a second player). Verified in the headset:
+- **Stereo**: the game renders twice per frame (left eye, then the right eye from the Present hook), each eye with
+  its own asymmetric frustum; full 3D world, lighting, culling.
 - **HUD** drawn into a centred panel in both eyes (size, distance, height adjustable); the marine motion tracker's
   flat-screen duplicate hidden.
 - **Menus, pause menu, cutscenes, movies, loading screens** on a flat virtual screen in front of you.
@@ -18,8 +19,11 @@ Working, verified in the headset:
 - **Head aim** for all three species: the head aims (shots follow it), the right stick turns; the view is the game's
   camera plus the head's difference, upright on Alien walls and ceilings; per-species aim offsets.
 
-Not done yet: positional (6DoF) head tracking, motion-controller aiming, melee gestures; multiplayer replication of
-the head-driven look is unverified.
+Known issue: the **multiplayer pause menu** renders in the eyes, cut off (multiplayer doesn't stop time, so it isn't
+detected as a pause; its state is logged for a fix).
+
+Not done yet: motion controls (controller aiming, weapon/hands on the controllers, melee gestures), positional
+(6DoF) head tracking, body IK.
 
 ## Using it
 

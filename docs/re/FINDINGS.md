@@ -289,6 +289,9 @@ a moved camera. Two full renders per frame at 60 fps (4K, vsync); draws and view
   `g_FrameCounter` (`009E1480`); the events were consumed by the first render -> infinite wait. Moving the kick frame
   aside for the second render (data write) fixes it.
 - Camera motion blur must be off (it compares each render with the previous one -> the whole world smears).
+- **Between frames, view 0 must hold the game's own camera** (2026-10-17): game logic reads it before the next camera
+  apply. A wide head-centred camera left there (first builds) made the Predator's "look at" objectives never complete in
+  VR; with the game's camera back (and head aim pointing it where the head looks) they do, with no pop-in.
 - Culling is reused from the first render (per-frame visibility caches keyed by `g_FrameCounter`): no visible gaps
   even with a 30-degree yaw on the second render.
 - **Leave the D3D lock after the second render (2026-10-17).** `Render_BeginFrame` -> `FUN_0066B070` enters the
