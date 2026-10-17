@@ -1,0 +1,11 @@
+# Build output
+bin/
+obj/
+*.user
+.vs/
+*.aps
+*.ipdb
+*.iobj
+
+# Logs from local test runs
+*.log

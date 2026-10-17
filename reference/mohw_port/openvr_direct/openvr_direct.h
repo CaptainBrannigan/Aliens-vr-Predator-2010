@@ -1,0 +1,75 @@
+#pragma once
+// Direct in-process 32-bit OpenVR connection (2026-09-22), replacing the retired 64-bit companion-process
+// architecture now that SteamVR 2.17 supports 32-bit clients from within a real, Steam-launched game (see project
+// memory: project_mohw_steamvr_32bit_direct_connection.md). Everything else (bone-hide, aiming, input, etc.) stays
+// shared/reused from hooks/.
+//
+// CRITICAL: never statically link openvr_api.lib -- doing so previously made MOHW's own DRM refuse to launch the
+// game at all ("unusual imports" in a dxgi.dll inside a DRM-protected process). Every OpenVR call here goes
+// through LoadLibrary/GetProcAddress (C-ABI functions) or raw vtable indexing (C++ interfaces like IVRCompositor)
+// instead. Re-verify with `dumpbin /imports` on the built dxgi.dll after any change here -- it must stay exactly
+// d3d11.dll/USER32.dll/KERNEL32.dll, nothing else.
+//
+// THREADING: VR_Init is done ONCE on a background thread (ConnectThreadProc), because it's confirmed (live,
+// repeatedly) to sometimes hang indefinitely -- must never block the game's render thread. WaitGetPoses and Submit
+// are called together, paired, on a SEPARATE dedicated thread (SubmitThreadProc) that owns its own independent
+// D3D11 device (g_ownDevice), never the game's. The game thread only CopyResource's each eye's fresh content into
+// a shared texture (D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX); SubmitThreadProc opens that same texture via
+// OpenSharedResource on its own device and submits it, paced by its own WaitGetPoses calls. This design was
+// arrived at after two earlier, simpler attempts both failed: (1) running Submit() on a background thread but
+// still against the GAME's device caused a DXGI_ERROR_DEVICE_REMOVED crash near a ResizeBuffers call; (2) keeping
+// Submit() on the game thread but moving only WaitGetPoses to a background thread broke OpenVR's required
+// WaitGetPoses+Submit pairing (alternating success/VRCompositorError_IndexOutOfRange, then a hang). A genuinely
+// separate device on a dedicated thread is the only architecture that avoids both failure modes at once.
+
+struct ID3D11Device;
+struct ID3D11Texture2D;
+
+namespace mohw::openvr_direct {
+
+// Call once per Present, with the SAME per-eye textures present_hook.cpp already computed for UpdateCompanionEyes
+// (companion_bridge.h) -- leftEye/rightEye, either of which may be nullptr meaning "this eye didn't render this
+// frame, resubmit whatever this eye last had" (alternating-eye's temporal-stereo semantics; UpdateCompanionEyes
+// treats null the same way). No-op until the background connection attempt succeeds. Safe to call every frame
+// regardless of connection state.
+void UpdateOpenVrDirect(ID3D11Device* device, ID3D11Texture2D* leftEye, ID3D11Texture2D* rightEye);
+
+// The render pose both eyes of one published pair were rendered with.
+struct PairStamp
+{
+    bool valid = false;
+    float quat[4] = {0, 0, 0, 1};
+    float pos[3] = {0, 0, 0};
+    bool posValid = false;
+};
+
+// PAIR PUBLISH (2026-09-25): SteamVR applies eye 0's submitted pose to BOTH eyes and ignores eye 1's (live-confirmed,
+// see project memory project_mohw_steamvr_eye1_pose_ignored.md), so both textures must always match one pose. Copies
+// both eyes and stores their shared stamp as one unit under both keyed mutexes: all or nothing, so SubmitThreadProc
+// can never see half of a pair. Both textures are required.
+void UpdateOpenVrDirectPair(ID3D11Device* device, ID3D11Texture2D* leftEye, ID3D11Texture2D* rightEye,
+                            const PairStamp& stamp);
+
+// NUMPAD3 toggle, default on. When off, present_hook.cpp falls back to per-eye publishing (UpdateOpenVrDirect).
+bool IsPairPublishEnabled();
+
+bool IsOpenVrDirectConnected();
+
+// The master switch's thread (hooks/master_switch.h), with SteamVR already running: one attempt at the connection --
+// VR_Init, the headset's frustum, compositor, controllers, dashboard tab. Blocking (VR_Init has been seen to hang, so
+// never on a game thread). NotNow: no headset connected this time (VR_Init failed, e.g. 215 Driver_WirelessHmdNotConnected
+// -- VR_IsHmdPresent alone said yes with no headset), try again later. Failed: don't retry.
+enum class ConnectResult
+{
+    Connected,
+    NotNow,
+    Failed,
+};
+ConnectResult TryConnectOpenVrDirect();
+
+// The HMD's real display refresh rate, queried live via IVRSystem::GetFloatTrackedDeviceProperty
+// (Prop_DisplayFrequency_Float) once connected -- see openvr_direct.cpp's g_detectedDisplayFrequencyHz comment.
+// Returns 0.0f if not yet known (not connected, or the query failed/returned an implausible value).
+float GetDetectedDisplayFrequencyHz();
+
+} // namespace mohw::openvr_direct
