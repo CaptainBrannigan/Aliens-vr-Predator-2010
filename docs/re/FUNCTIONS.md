@@ -1,9 +1,10 @@
-# AvP 2010 identified functions and globals
+﻿# AvP 2010 identified functions and globals
 
-Generated from `avp_symbols.csv` (the source of truth; edit it, then re-run `tools/ghidra/ApplySymbols.java`).
+Generated from `avp_symbols.csv` (the source of truth; edit it, then re-run `tools/gen_functions_md.ps1` and
+`tools/ghidra/ApplySymbols.java`).
 Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confidence: high = read from decompile/live; medium = inferred; open = unknown.
 
-102 functions, 40 globals/vtables.
+112 functions, 43 globals/vtables.
 
 ## Camera
 
@@ -19,6 +20,7 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 | `004FA3E0` | func | `Cam_SetHorizontalFov` | high | (hFov, aspectScale): set horizontal half-FOV (cam+0xEC) and derive vertical (cam+0xFC) |
 | `004FA560` | func | `Cam_SetVerticalFov` | high | (vFov, aspectScale): set vertical half-FOV (cam+0xFC) and derive horizontal |
 | `004FA6E0` | func | `Cam_InitDefaults` | high | Camera defaults (FOV, clip, misc cam+0x110..0x158) |
+| `004FA900` | func | `Cam_BuildProjection` | high | Projection matrix: P00 = cot(vHalf)/g_ProjectionAspect, P11 = -cot(vHalf), clip from +0xDC/+0xE0 -- ignores cam+0xE4 |
 | `004FB980` | func | `Cam_FlyCamUpdate` | high | AVP.FlyCam free-camera movement from input actions 0-10 |
 | `00528220` | func | `Cinematic_SetClipPlanes` | medium | Sets cam+0xE0/+0xDC for cinematics |
 | `0052A160` | func | `Cinematic_ApplyCamera` | high | Cutscene camera: pos +0x38, matrix +0x44, vFOV +0x9C; only when g_CinematicActive |
@@ -38,6 +40,7 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 | `00700EA0` | func | `Char_GetCameraClip` | medium | Returns a per-character clip value (vtable+0x84) used for Cam_SetClipE0 |
 | `0091D694` | data | `vt_CameraComponent` | high | Camera component vtable |
 | `009CCD48` | data | `g_CurViewCamera` | high | Pointer to current view camera struct |
+| `009CCD54` | data | `g_ProjectionAspect` | high | Global aspect: horizontal projection scale (Cam_BuildProjection) and multiplier of the FOV setters aspect argument |
 | `009CCD58` | data | `g_CameraDirty` | high | Set by every camera setter |
 | `009DB198` | data | `g_ViewCameras` | high | Array of view cameras, stride 0x15C |
 | `009DB708` | data | `g_FlyCamInvertPitch` | medium | FlyCam pitch invert (toggled by FlyCam action 10); first global after the 4-slot view array |
@@ -54,11 +57,14 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 | `005D8790` | func | `Render_SetupViewportAspect` | medium | Viewport/letterbox/aspect from screen size; calls Cam_SetViewportRect + Cam_SetHorizontalFov |
 | `005D8B60` | func | `Render_BeginFrame` | medium | Per-frame counters reset; dead half-width mode behind g_HalfWidthMode |
 | `005D8C00` | func | `Render_EndFrame` | high | End of frame -> Render_FinishAndPresent |
+| `00656A80` | func | `Render2D_FadeQuadInViewport` | medium | Colour quad over the current view's viewport rect (cam+0x3C) -- the only HUD-side reader of that rect seen live |
 | `00669920` | func | `D3D_GetSwapChain` | high | return g_SwapChain |
 | `00669C10` | func | `D3D_EnumOutputModes` | medium | Enumerates display modes via output |
 | `0066A840` | func | `D3D_PresentFrame` | high | context->CopyResource(g_BackBuffer, g_SceneTarget) then swapchain->Present(vsync,0) |
+| `0066B070` | func | `Render_BeginFrameLockAndConstants` | high | EnterCriticalSection(g_D3DLock), optional clears, per-frame constant buffer from the current view camera |
 | `0066C060` | func | `D3D_CreateDeviceAndSwapChain` | high | D3D11CreateDeviceAndSwapChain; R8G8B8A8_UNORM_SRGB, 2 buffers |
 | `0066C580` | func | `D3D_HandleModeChange` | medium | Fullscreen state query + resize |
+| `00675560` | func | `Render2D_FlushBatch` | medium | Flushes the queued 2D quads (vertex memcpy + one draw); run at the start of Frame_EndFrame (via FUN_0067BDE0) and before present |
 | `0067BF00` | func | `Render_FinishAndPresent` | high | Final passes then D3D_PresentFrame |
 | `00808DA0` | func | `Frame_BeginFrame` | high | cdecl(char clear): view 0 current, optional clears, Render_BeginFrame, render-state reset; in-game passes 1 |
 | `00808E00` | func | `Scene_RenderFrame` | high | The whole 3D frame: ~30 subsystem render passes (mesh queue 0053AB20, 005D7C50, 005D2900, 005FF120, GUI 0079C480) |
@@ -72,6 +78,7 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 | `009EA257` | data | `g_HalfWidthMode` | high | Dead flag (BSS, never written) for a half-width viewport mode |
 | `009FAAFC` | data | `g_ScreenWidth` | medium | Screen width used for viewports |
 | `009FAB00` | data | `g_ScreenHeight` | medium | Screen height used for viewports |
+| `00A257FC` | data | `g_D3DLock` | high | CRITICAL_SECTION around the D3D device: entered by Render_BeginFrame (FUN_0066B070), left by D3D_PresentFrame after Present; a second BeginFrame in a frame must leave it once more or level loads hang |
 | `00A25814` | data | `g_BackBufferWidth` | high | Swapchain width |
 | `00A25818` | data | `g_BackBufferHeight` | high | Swapchain height |
 | `00A2581C` | data | `g_D3DDevice` | high | ID3D11Device* |
@@ -79,6 +86,17 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 | `00A25824` | data | `g_SwapChain` | high | IDXGISwapChain* |
 | `00A25828` | data | `g_SceneTarget` | medium | Offscreen target copied to the backbuffer at present |
 | `00A2582C` | data | `g_BackBuffer` | medium | Backbuffer resource (CopyResource destination) |
+
+## HUD
+
+| Address | Kind | Name | Conf. | Role |
+|---|---|---|---|---|
+| `00627EA0` | func | `Gui_RenderScreens` | medium | Renders the active GUI screens (called by Gui_RenderPass) |
+| `006C8810` | func | `Hud_DrawMotionTracker` | medium | Motion tracker: queues 2 HUD quads (512x512 tracker texture, 128x128 objective arrow) into the 2D batch |
+| `006EF6A0` | func | `Hud_MarineTrackerTail` | high | Scene_RenderFrame's tail jump (if 009CFDED): when g_PlayerSpecies == 2 and the tracker is enabled, calls Hud_DrawMotionTracker |
+| `0079C480` | func | `Gui_RenderPass` | high | Scene_RenderFrame's last call (returns to 00808F38): the GUI screens including the HUD, with the engine's cached full-screen viewport |
+| `0079C4D0` | func | `Gui_IsMenuScreenUp` | medium | True if a GUI screen other than the whitelisted HUD screens is up (used by Game_IsPausedWithMenu) |
+| `0080A450` | func | `Game_IsPausedWithMenu` | high | (paused 009E14A8 || time scale 009E1484 <= 0) && Gui_IsMenuScreenUp && !00A71E27; VR shows those frames on the flat screen |
 
 ## Views
 
@@ -180,6 +198,7 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 |---|---|---|---|---|
 | `006A6450` | func | `Char_SelectSkinAttachment` | high | Chooses FirstPerson vs ThirdPerson.SkinAttachment by char+0xE8 bit 2 |
 | `007062C0` | func | `Entity_CreateVisionAndWeaponComps` | medium | Creates VisionMode + Weapon components on an entity |
+| `009D4BA0` | data | `g_PlayerSpecies` | medium | Player species index; 2 runs the motion tracker (Scene_RenderFrame tail call FUN_006EF6A0), so the marine |
 
 ## Misc
 

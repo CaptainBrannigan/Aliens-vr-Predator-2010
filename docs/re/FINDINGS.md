@@ -225,7 +225,8 @@ memory reads/writes of the camera structs, and hardware breakpoints for the few 
 `.rdata` (no code bytes changed, the hook never even ran) produced the same silent exit at the first level load.
 So vtable-slot and exe-IAT hooks are out as well. **Virtual functions are hooked with per-object shadow vtables**
 (`src/hooks/vmt_shadow.cpp`): a copy of the class vtable in mod memory with stub entries, and a heap scan that
-validates each object (camera component: `obj+4` = owner entity, `owner+0x28 == obj`) before atomically repointing
+validates each object (camera component: the constructor's fixed `.rdata` pointers `+0xA8 = 0091D4B4`,
+`+0xE0 = 0091D4BC` and a settings pointer at `+0x7C`; the first try, an owner back-pointer, was wrong) before atomically repointing
 its vtable pointer. Only heap memory is written.
 
 ---
@@ -253,3 +254,53 @@ a moved camera. Two full renders per frame at 60 fps (4K, vsync); draws and view
 - Camera motion blur must be off (it compares each render with the previous one -> the whole world smears).
 - Culling is reused from the first render (per-frame visibility caches keyed by `g_FrameCounter`): no visible gaps
   even with a 30-degree yaw on the second render.
+- **Leave the D3D lock after the second render (2026-10-17).** `Render_BeginFrame` -> `FUN_0066B070` enters the
+  critical section `g_D3DLock` (`00A257FC`) that guards the device; only `D3D_PresentFrame` leaves it, after Present.
+  The right eye's `Frame_BeginFrame` runs inside Present, so without one extra `LeaveCriticalSection` the main thread
+  kept the lock with a recursion count = stereo frames rendered. Re-entrant, so the main thread never noticed, but
+  the level loader (another thread, creating the next level's GPU resources) waited on it forever: every load after
+  the first of a session sat on an animating loading screen. `avpvr_stereo.log` prints the recursion count (1 =
+  balanced: the game's own, left after Present).
+- Projection: `Cam_BuildProjection` (`004FA900`) takes the horizontal scale from the global `g_ProjectionAspect`
+  (`009CCD54`), not `cam+0xE4`, so each eye writes its aspect there (and the game's value goes back on flat frames).
+
+---
+
+## 12. HUD: the GUI pass, the VR HUD panel, the motion tracker (2026-10-16/17, live)
+
+**The HUD ignores the view's viewport rect** (`cam+0x3C`). Its only readers seen live: `Gui_MapRectToViewViewport`
+for text drawn with flag 0x10, and `Render2D_FadeQuadInViewport` (`00656A80`, a colour quad -- the "flashing black
+box" when the rect was squeezed).
+
+**The HUD is the GUI pass**, `Gui_RenderPass` (`0079C480`, -> `Gui_RenderScreens` `00627EA0`), the last call of
+`Scene_RenderFrame` (`00808F33`, returns to `00808F38`). It draws into the scene target with the engine's cached
+full-screen viewport and sets no D3D viewport of its own -- so a squeeze can't hang off `RSSetViewports` inside it.
+
+**Pass detection at draw time** (`src/hooks/d3d_probe.cpp`, table in `src/hooks/hud_passes.h`): `Frame_RenderScene`'s
+return address `0080A44B` sits at a fixed stack slot A for each of the two renders (the game's, and the right eye's
+from the Present hook, deeper). A is learned once per render by a stack scan (game render: the shallowest match,
+since stale copies of the right eye's frame lie deeper; right eye: the deepest). After that, the running
+`Scene_RenderFrame` call is read from A-4 (calls before `00808E93`'s `PUSH EDI`), A-8 (later argument-less calls),
+A-12 (the GUI call: `PUSH 0` -> `[A-8] = 0`, `[A-12] = 00808F38`) or A-16 (`00808F0B` / `00808F14`, after
+`PUSH ESI`): three to five dword reads per draw.
+
+**VR HUD panel:** from the first GUI-pass draw to the eye's copy, the game's full-screen viewport (and scissors) are
+squeezed into a 16:9 panel while the bound target is the scene target / back buffer; offscreen targets keep theirs.
+Size, distance (per-eye convergence: centre tan = -eyeOffset / distance) and height are dashboard settings.
+
+**Late passes in gameplay** (draw counts per pass, 2026-10-17): only `005FF120` (the whole 3D scene) and the GUI pass
+draw; squeezing from `005FF120` shrank the world. Passes the user identified by hiding them: all lighting, prop
+meshes, floor and wall meshes (among `0053AB20` / `005D7C50` / `005D2900` / ...; not yet tied to addresses).
+
+**Marine motion tracker:** `Scene_RenderFrame`'s tail jump (`00808F4B`, when `009CFDED` != 0) -> `Hud_MarineTrackerTail`
+(`006EF6A0`, only for `g_PlayerSpecies` (`009D4BA0`) == 2) -> `Hud_DrawMotionTracker` (`006C8810`) queues two quads
+into the 2D batch, flushed by `Render2D_FlushBatch` (`00675560`) at the start of `Frame_EndFrame`: an 18-index draw
+with a 512x512 texture (format 77: grid clock, wave, blips) and a 6-index draw with a 128x128 one (the objective
+arrow). They run outside every listed pass. A **second, live copy** of the tracker -- no objective arrow, its clock
+vanishing whenever the wave or a blip shows -- is some other draw sampling the 512x512 texture, placed for the flat
+screen; it stays at its full-screen spot. Hiding every other draw that samples the HUD tracker's textures removes
+exactly it (user-verified): `HideDuplicateTracker`, bound textures tracked in a `PSSetShaderResources` hook.
+Not drawn by: other threads, command lists, indirect draws (all zero in gameplay).
+
+**Pause / menus:** `Game_IsPausedWithMenu` (`0080A450`) is true for the in-game pause menu; VR shows those frames
+(and cinematics) on the flat virtual screen, with the game's own aspect.
