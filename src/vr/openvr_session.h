@@ -4,12 +4,14 @@
 // vrserver, and IVRSystem / IVRCompositor / IVROverlay are used through the SDK's interface classes.
 //
 // Nothing here launches SteamVR: connection is only attempted while vrserver.exe is running. All calls are made on
-// the game's main thread (camera apply + Present), so no locking.
+// the game's main thread (camera apply + Present), except the dashboard tab's overlay calls (its own thread; all
+// IVROverlay calls take OverlayMutex()).
 //
 // Also owns the flat "screen" overlay used for everything that isn't head-tracked gameplay (menus, FMV movies,
 // loading screens, cutscenes): a world-locked quad placed in front of the head when it appears.
 
 #include <cstdint>
+#include <mutex>
 
 struct ID3D11Texture2D;
 
@@ -44,5 +46,8 @@ void SubmitEyes(ID3D11Texture2D* left, const float boundsLeft[4], ID3D11Texture2
 // Flat screen: show `texture` on the virtual screen (placed in front of `head` when it was hidden), or hide it.
 void ShowScreen(ID3D11Texture2D* texture, float texelAspect, const Pose& head);
 void HideScreen();
+
+// Serializes IVROverlay calls between the main thread (screen) and the dashboard thread (vr/dashboard.cpp).
+std::mutex& OverlayMutex();
 
 } // namespace avp::vr

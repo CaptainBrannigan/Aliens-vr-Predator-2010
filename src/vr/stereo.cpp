@@ -4,11 +4,14 @@
 #include "../core/addresses.h"
 #include "../core/dev_flags.h"
 #include "../core/log.h"
+#include "../core/settings.h"
+#include "../hooks/d3d_probe.h"
 #include "../hooks/vmt_shadow.h"
 
 #include <windows.h>
 #include <d3d11.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstring>
 
@@ -39,6 +42,7 @@ bool g_posesWaited = false;   // WaitGetPoses already called for this frame
 vr::Pose g_head{};
 ViewCamera g_base;            // the game's own camera this frame
 bool g_haveRefYaw = false;
+std::atomic<bool> g_recenterRequested{false}; // dashboard button (any thread)
 float g_refYaw = 0.0f;        // head yaw at the first stereo frame (recenter reference)
 unsigned g_stereoFrames = 0;
 float g_gameAspect = 0.0f;         // the game's global aspect (009CCD54) before VR changed it
@@ -56,12 +60,13 @@ struct EyeCamera
     float fullHFov;
     float aspect; // tanH / tanV
     float bounds[4]; // uMin vMin uMax vMax
-    float hudViewport[4]; // HUD panel in the eye's render: scaleX scaleY offsetX offsetY (cam+0x3C layout)
+    float hudPanel[4]; // HUD panel in the eye's render: scaleX scaleY offsetX offsetY (fractions of the render)
 };
 
-// The game's own HUD viewport (cam+0x3C) and whether VR changed it, for the flat frames.
-float g_gameViewport[4] = {1.0f, 1.0f, 0.0f, 0.0f};
-bool g_viewportChanged = false;
+// The HUD panel of the eye being rendered (HudPanel()), valid while g_hudPanelActive.
+float g_hudPanel[4] = {1.0f, 1.0f, 0.0f, 0.0f};
+bool g_hudPanelActive = false;
+DWORD g_lastStereoTick = 0; // last stereo frame's camera apply
 
 using PFN_IsPausedMenu = bool(__cdecl*)();
 const auto IsPausedWithMenu = reinterpret_cast<PFN_IsPausedMenu>(addr::Game_IsPausedWithMenu);
@@ -130,7 +135,7 @@ EyeCamera BuildEye(int eye, float fovScale = 1.0f)
         g.tanBottom = std::fmax(g.tanBottom, r.tanBottom);
         g.offset[0] = 0.0f;
     }
-    const float side = g.offset[0] * dev::kWorldUnitsPerMeter * dev::kEyeRightSign;
+    const float side = g.offset[0] * dev::kWorldUnitsPerMeter * settings::IpdScale() * dev::kEyeRightSign;
     c.pos[0] = g_base.pos[0] + c.rot[0] * side;
     c.pos[1] = g_base.pos[1] + c.rot[3] * side;
     c.pos[2] = g_base.pos[2] + c.rot[6] * side;
@@ -153,15 +158,22 @@ EyeCamera BuildEye(int eye, float fovScale = 1.0f)
     c.bounds[2] = (g.tanRight / tanH + 1.0f) * 0.5f;
     c.bounds[3] = (1.0f - g.tanTop / tanV) * 0.5f;
 
-    // HUD panel: 16:9, centred on straight ahead (u = v = 0.5 in the symmetric render, the same direction in both
-    // eyes -> the HUD sits at infinity), kHudHalfWidthDeg either side. Drawn through the engine's per-view HUD
-    // viewport (Gui_MapRectToViewViewport: screen * scale + offset), which the 3D scene ignores.
-    const float hudTanW = std::tan(dev::kHudHalfWidthDeg * 0.01745329252f);
+    // HUD panel: 16:9, HudWidthDeg wide, HudHeightDeg above straight ahead, and centred for each eye on the point
+    // HudDistance ahead of the head centre (seen from an eye at x = offset: tan = -offset / distance), so both eyes
+    // converge on it there. The D3D hooks squeeze the GUI pass's viewport into it (d3d_probe.cpp). Not the camera's
+    // viewport rect (cam+0x3C): the HUD ignores it (2026-10-16, no effect).
+    constexpr float kDeg = 0.01745329252f;
+    const float hudTanW = std::tan(settings::HudWidthDeg() * 0.5f * kDeg);
     const float hudTanH = hudTanW * (9.0f / 16.0f);
-    c.hudViewport[0] = hudTanW / tanH;                  // scaleX
-    c.hudViewport[1] = hudTanH / tanV;                  // scaleY
-    c.hudViewport[2] = 0.5f - c.hudViewport[0] * 0.5f;  // offsetX
-    c.hudViewport[3] = 0.5f - c.hudViewport[1] * 0.5f;  // offsetY
+    const float distance = settings::HudDistance() > 0.1f ? settings::HudDistance() : 0.1f;
+    const float centreTanX = eye < 0 ? 0.0f : -g.offset[0] / distance;
+    const float centreTanY = std::tan(settings::HudHeightDeg() * kDeg);
+    const float centreU = 0.5f + 0.5f * centreTanX / tanH;
+    const float centreV = 0.5f - 0.5f * centreTanY / tanV; // v = 0 is the top
+    c.hudPanel[0] = hudTanW / tanH;                     // scaleX
+    c.hudPanel[1] = hudTanH / tanV;                     // scaleY
+    c.hudPanel[2] = centreU - c.hudPanel[0] * 0.5f;     // offsetX
+    c.hudPanel[3] = centreV - c.hudPanel[1] * 0.5f;     // offsetY
     return c;
 }
 
@@ -187,19 +199,11 @@ void ApplyEye(const EyeCamera& c)
     globalAspect = c.aspect;
     g_lastWrittenAspect = c.aspect;
     SetHorizontalFov(c.fullHFov, 1.0f);
-
-    // HUD into its panel (remember the game's own viewport the first time).
-    float* vp = views[0].viewport;
-    if (!g_viewportChanged)
-    {
-        std::memcpy(g_gameViewport, vp, sizeof(g_gameViewport));
-        g_viewportChanged = true;
-    }
-    std::memcpy(vp, c.hudViewport, sizeof(c.hudViewport));
+    std::memcpy(g_hudPanel, c.hudPanel, sizeof(g_hudPanel));
     Global<uint8_t>(addr::g_CameraDirty) = 1;
 }
 
-// Flat frames show the game's own image: give the global aspect and HUD viewport back if they still hold ours.
+// Flat frames show the game's own image: give the global aspect back if it still holds ours.
 void RestoreGameAspect()
 {
     float& globalAspect = Global<float>(kBaseAspect);
@@ -207,12 +211,6 @@ void RestoreGameAspect()
     {
         globalAspect = g_gameAspect;
         g_lastWrittenAspect = -1.0f;
-    }
-    if (g_viewportChanged)
-    {
-        std::memcpy(ViewCameras()[0].viewport, g_gameViewport, sizeof(g_gameViewport));
-        g_viewportChanged = false;
-        Global<uint8_t>(addr::g_CameraDirty) = 1;
     }
 }
 
@@ -277,6 +275,8 @@ void __fastcall CamApplyReplacement(void* self, void* /*edx*/, void* entity)
         return;
 
     std::memcpy(&g_base, &ViewCameras()[0], sizeof(ViewCamera));
+    if (g_recenterRequested.exchange(false))
+        g_haveRefYaw = false;
     if (!g_haveRefYaw)
     {
         float y, p, r;
@@ -287,6 +287,8 @@ void __fastcall CamApplyReplacement(void* self, void* /*edx*/, void* entity)
     }
     ApplyEye(BuildEye(0));
     g_stereoFrame = true;
+    g_hudPanelActive = true;
+    g_lastStereoTick = GetTickCount();
 }
 
 void LogFrame(const EyeCamera& l, const EyeCamera& r)
@@ -297,11 +299,11 @@ void LogFrame(const EyeCamera& l, const EyeCamera& r)
     AVP_LOG(kLog,
             "stereo frame %u: head yaw/pitch/roll %.1f/%.1f/%.1f deg, base yaw %.1f pitch %.1f, base pos (%.2f %.2f %.2f), "
             "L pos (%.3f %.3f %.3f) R pos (%.3f %.3f %.3f), cam fov h/v %.1f/%.1f aspect %.3f, bounds L %.3f..%.3f x "
-            "%.3f..%.3f",
+            "%.3f..%.3f, D3D lock recursion %ld (1 = balanced: the game's own, left after Present)",
             g_stereoFrames, hy * 57.3f, hp * 57.3f, hr * 57.3f, g_base.yaw * 57.3f, g_base.pitch * 57.3f, g_base.pos[0],
             g_base.pos[1], g_base.pos[2], l.pos[0], l.pos[1], l.pos[2], r.pos[0], r.pos[1], r.pos[2],
             2 * v.hHalfFov * 57.3f, 2 * v.vHalfFov * 57.3f, v.aspect, l.bounds[0], l.bounds[2], l.bounds[1],
-            l.bounds[3]);
+            l.bounds[3], reinterpret_cast<const CRITICAL_SECTION*>(addr::g_D3DLock)->RecursionCount);
 }
 
 } // namespace
@@ -310,6 +312,14 @@ void Register()
 {
     RegisterShadowReplacement(addr::CamComp_ApplyToRenderCamera, reinterpret_cast<void*>(&CamApplyReplacement));
 }
+
+const float* HudPanel() { return g_hudPanelActive && settings::HudPanel() ? g_hudPanel : nullptr; }
+
+void RequestRecenter() { g_recenterRequested.store(true); }
+
+bool InEyeRender() { return g_hudPanelActive; }
+
+bool StereoActive() { return g_lastStereoTick && GetTickCount() - g_lastStereoTick < 500; }
 
 void OnPresent(IDXGISwapChain*, unsigned& syncInterval)
 {
@@ -334,6 +344,7 @@ void OnPresent(IDXGISwapChain*, unsigned& syncInterval)
 
         // Left eye = the frame the game just rendered with the left camera.
         ctx->CopyResource(g_eyeTex[0], backBuffer);
+        ResetHudViewport(ctx); // the 3D passes must not inherit the squeezed GUI viewport
 
         // Right eye = a second render (job-batch join skipped: already joined by the first render).
         ApplyEye(right);
@@ -341,10 +352,15 @@ void OnPresent(IDXGISwapChain*, unsigned& syncInterval)
         const int savedKick = kickFrame;
         if (kickFrame == Global<int>(addr::g_FrameCounter))
             kickFrame = savedKick - 1;
-        BeginFrame(1);
+        SetSecondRender(true);
+        BeginFrame(1); // enters the D3D lock again (Render_BeginFrame) ...
         RenderScene();
+        SetSecondRender(false);
+        LeaveCriticalSection(reinterpret_cast<LPCRITICAL_SECTION>(addr::g_D3DLock)); // ... so leave it (addresses.h)
         kickFrame = savedKick;
         ctx->CopyResource(g_eyeTex[1], scene);
+        ResetHudViewport(ctx);
+        g_hudPanelActive = false;
 
         if (g_stereoFrames++ < 3 || g_stereoFrames % 600 == 0)
             LogFrame(left, right);
@@ -361,6 +377,7 @@ void OnPresent(IDXGISwapChain*, unsigned& syncInterval)
     else
     {
         // Flat: the game's frame on the virtual screen, black in the eyes.
+        g_hudPanelActive = false;
         RestoreGameAspect();
         if (!g_posesWaited)
             g_head = vr::WaitPoses();

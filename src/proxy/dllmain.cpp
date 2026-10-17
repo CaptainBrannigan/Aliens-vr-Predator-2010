@@ -12,12 +12,14 @@
 #include "../core/dev_flags.h"
 #include "../core/game.h"
 #include "../core/log.h"
+#include "../core/settings.h"
 #include "../hooks/d3d_probe.h"
 #include "../hooks/render_twice_experiment.h"
 #include "../hooks/snapshot.h"
 #include "../hooks/trace_hooks.h"
 #include "../hooks/two_view_experiment.h"
 #include "../hooks/vmt_shadow.h"
+#include "../hooks/xinput_hook.h"
 #include "../vr/stereo.h"
 
 #include <MinHook.h>
@@ -67,6 +69,8 @@ void InitializeMod()
         return;
     }
     avp::InstallExitHooks();
+    avp::settings::Load(); // avpvr_settings.ini (adjusted in the SteamVR dashboard's AvP VR tab)
+    avp::InstallXInputHook(); // virtual pad 0 from the motion controllers -- see avpvr_xinput.log
 
     const int hooks = avp::InstallTraceHooks();
     AVP_LOG(kLog, "%d trace hooks installed -- see avpvr_trace.log", hooks);

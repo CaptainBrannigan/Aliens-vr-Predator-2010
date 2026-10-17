@@ -8,9 +8,23 @@
 // draws per frame (total / with view 0 current / view 1 current), viewport calls per frame, the view count in effect,
 // and each distinct viewport rectangle the first time it is seen.
 
+//
+// VR HUD panel: from the first draw of the game's GUI pass -- the last call in Scene_RenderFrame, FUN_0079C480 ->
+// FUN_00627EA0, which draws the HUD screens -- full-screen viewports (and scissors) are squeezed into
+// stereo::HudPanel() while an eye renders (see d3d_probe.cpp for how the pass is recognised).
+
+struct ID3D11DeviceContext;
+
 namespace avp {
 
 // Starts a thread that waits for the game's device/context/swapchain globals, then installs the hooks.
 void StartD3DProbe();
+
+// Puts back the GUI pass's own (unsqueezed) viewport/scissor if the last one set was squeezed, so later passes that
+// rely on the engine's cached state don't inherit the panel.
+void ResetHudViewport(ID3D11DeviceContext* ctx);
+
+// Marks the right eye's render (from the Present hook) so GUI-pass detection uses that render's stack layout.
+void SetSecondRender(bool on);
 
 } // namespace avp

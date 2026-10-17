@@ -26,4 +26,17 @@ void Register();
 // From the Present hook, before the real Present. May lower the sync interval (VR paces the frame instead).
 void OnPresent(IDXGISwapChain* swapChain, unsigned& syncInterval);
 
+// While an eye renders: the HUD panel inside the eye image (scaleX, scaleY, offsetX, offsetY of the full render);
+// nullptr otherwise. The D3D hooks squeeze the game's GUI pass (the HUD) into it.
+const float* HudPanel();
+
+// Main thread: an eye is being rendered (left: from the camera apply to its copy at Present; right: its render).
+bool InEyeRender();
+
+// A stereo frame started within the last half second (VR gameplay is running).
+bool StereoActive();
+
+// Any thread: the next stereo frame takes the current head yaw as straight ahead.
+void RequestRecenter();
+
 } // namespace avp::stereo

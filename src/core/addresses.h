@@ -123,6 +123,14 @@ constexpr uintptr_t g_FrameCounter         = 0x009E1480; // int, keys per-frame 
 constexpr uintptr_t g_JobBatchKickFrame    = 0x009CCD0C; // int
 constexpr uintptr_t g_JobBatchWorkerCount  = 0x009CCD10; // int
 constexpr uintptr_t g_PlayerProfile        = 0x00A71E14; // pointer
+// CRITICAL_SECTION around the D3D device: entered by Render_BeginFrame (FUN_0066B070), left by D3D_PresentFrame after
+// Present. A second Frame_BeginFrame in the same frame (the VR right eye) must leave it once more, or the main thread
+// keeps it forever (recursion count = stereo frames) and the level loader, which needs it for the new level's GPU
+// resources, waits on it for good: 2026-10-17, every level load after the first of a session hung on the loading screen.
+constexpr uintptr_t g_D3DLock              = 0x00A257FC;
+// Player species index; 2 runs the motion tracker (Scene_RenderFrame's tail call FUN_006EF6A0 -> FUN_006C8810), so the
+// marine. Others not verified.
+constexpr uintptr_t g_PlayerSpecies        = 0x009D4BA0; // int
 constexpr uintptr_t g_Console              = 0x009E77A0; // pointer
 constexpr uintptr_t g_ConsoleGateA         = 0x009E1C58; // byte, must be != 0 for the console
 constexpr uintptr_t g_ConsoleGateB         = 0x009E15C8; // byte, must be 0

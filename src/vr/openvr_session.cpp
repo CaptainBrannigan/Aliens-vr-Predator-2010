@@ -1,5 +1,7 @@
 #include "openvr_session.h"
 
+#include "dashboard.h"
+#include "vr_input.h"
 #include "../core/log.h"
 
 #include <windows.h>
@@ -102,6 +104,12 @@ void Connect()
     }
     AVP_LOG(kLog, "CONNECTED: recommended %ux%u per eye, tracking universe %d, overlay %s", w, h, g_universe,
             g_overlay ? "yes" : "NO");
+    dashboard::Start(g_overlay);
+    auto* vrInput = static_cast<::vr::IVRInput*>(get(::vr::IVRInput_Version, &err));
+    if (vrInput)
+        input::Init(vrInput, g_system);
+    else
+        AVP_LOG(kLog, "IVRInput missing (err %d) -- no controllers", err);
 }
 
 ::vr::Texture_t DxTexture(ID3D11Texture2D* t)
@@ -126,6 +134,12 @@ void TryConnect()
 
 bool IsConnected() { return g_compositor != nullptr; }
 
+std::mutex& OverlayMutex()
+{
+    static auto* m = new std::mutex(); // leaked on purpose: no exit-time destructor
+    return *m;
+}
+
 const EyeGeometry& Eye(int eye) { return g_eyes[eye & 1]; }
 
 Pose WaitPoses()
@@ -135,6 +149,7 @@ Pose WaitPoses()
         return p;
     ::vr::TrackedDevicePose_t poses[::vr::k_unMaxTrackedDeviceCount]{};
     const ::vr::EVRCompositorError err = g_compositor->WaitGetPoses(poses, ::vr::k_unMaxTrackedDeviceCount, nullptr, 0);
+    input::Update(); // controller actions for this frame (the virtual pad)
     const ::vr::TrackedDevicePose_t& hmd = poses[::vr::k_unTrackedDeviceIndex_Hmd];
     if (err == ::vr::VRCompositorError_None && hmd.bPoseIsValid)
     {
@@ -162,6 +177,7 @@ void ShowScreen(ID3D11Texture2D* texture, float texelAspect, const Pose& head)
 {
     if (!g_overlay)
         return;
+    std::lock_guard<std::mutex> lock(OverlayMutex());
     if (g_screen == ::vr::k_ulOverlayHandleInvalid)
     {
         const ::vr::EVROverlayError e = g_overlay->CreateOverlay("avpvr.screen", "AvP VR screen", &g_screen);
@@ -198,6 +214,7 @@ void HideScreen()
 {
     if (g_overlay && g_screenVisible)
     {
+        std::lock_guard<std::mutex> lock(OverlayMutex());
         g_overlay->HideOverlay(g_screen);
         g_screenVisible = false;
         AVP_LOG(kLog, "screen hidden");

@@ -80,10 +80,9 @@ constexpr float kPersistentCameraFovMargin = 1.3f;
 // Off again: the culling at the eye edges was the culling frustum (+0xEC/+0xFC) being narrower than the actual
 // projection (global aspect). Turn on only if edge culling comes back.
 constexpr bool kDiagRenderEverything = false;
-// HUD panel half width in degrees (16:9 panel straight ahead, both eyes).
-constexpr float kHudHalfWidthDeg = 30.0f;
+
 constexpr float kEyeRightSign = 1.0f;  // flip if the stereo depth looks inverted (eyes swapped)
 constexpr bool kAddGamePitch = false;  // view pitch = head pitch only (true: + the game's look pitch)
-constexpr float kWorldUnitsPerMeter = 1.0f; // assumption: engine units are meters
+constexpr float kWorldUnitsPerMeter = 1.0f; // assumption: engine units are meters (x the IpdScale setting)
 
 } // namespace avp::dev

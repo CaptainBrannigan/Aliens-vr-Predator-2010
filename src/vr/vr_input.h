@@ -1,0 +1,37 @@
+#pragma once
+// SteamVR Input (IVRInput_011) for the motion controllers, as a virtual Xbox pad (hooks/xinput_hook.cpp): ported from
+// the MOHW mod's openvr_direct/vr_input.cpp. The action manifest and the default Touch bindings are generated here and
+// written next to the DLL at connect time, so players rebind in SteamVR's own binding UI (Settings > Controllers >
+// Manage controller bindings > AvP), not in a file.
+//
+// Every pad control is its own SteamVR action ("Gamepad: A" ...); the game resolves them per species and context
+// itself, exactly as with a real pad. Default Touch layout: sticks = sticks (and their clicks), triggers = LT / RT
+// (analog), A / B / X / Y = A / B / X / Y, thumbrest touch = LB (left) / RB (right), D-pad on double presses
+// (X = left, Y = up, B = right, A = down), Start on a long Y press; Back unbound. Grips and hand poses are declared
+// for the motion-control work to come but drive nothing yet.
+//
+// Log: avpvr_input.log.
+
+namespace vr {
+class IVRInput;
+class IVRSystem;
+}
+
+namespace avp::input {
+
+// Once, after the SteamVR connection is up (main thread).
+void Init(::vr::IVRInput* input, ::vr::IVRSystem* system);
+
+// Main thread, once per frame, right after WaitGetPoses.
+void Update();
+
+// The virtual pad, for hooks/xinput_hook.cpp (any thread, lock-free). False until the first update.
+struct PadState
+{
+    unsigned short buttons;           // XINPUT_GAMEPAD_* mask
+    unsigned char leftTrigger, rightTrigger; // 0-255
+    float moveX, moveY, turnX, turnY; // -1..1, +Y = pushed forward
+};
+bool GetPad(PadState* out);
+
+} // namespace avp::input
