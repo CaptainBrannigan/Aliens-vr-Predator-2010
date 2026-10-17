@@ -10,7 +10,14 @@
 //
 // Log: avpvr_shadow.log (scans, candidates, validated, swapped objects).
 
+#include <cstdint>
+
 namespace avp {
+
+// Puts `replacement` into every shadow vtable entry that originally holds `originalFunction` (taking precedence over
+// a trace stub). The replacement must match the original's calling convention exactly and call the original itself.
+// Call before StartVmtShadow().
+void RegisterShadowReplacement(uintptr_t originalFunction, void* replacement);
 
 // Builds the shadow vtables and starts the scanner thread. Trace hooks must already be installed.
 void StartVmtShadow();

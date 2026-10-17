@@ -141,3 +141,5 @@ address,kind,name,area,confidence,role
 009e1480,L,g_FrameCounter,Render,high,"Frame number; keys per-frame caches (visibility masks, job joins)"
 009ccd0c,L,g_JobBatchKickFrame,Render,high,"Frame the job batch was kicked; join only when == g_FrameCounter"
 009ccd10,L,g_JobBatchWorkerCount,Render,high,"Number of workers/events in the job batch"
+004fa900,F,Cam_BuildProjection,Camera,high,"Projection matrix: P00 = cot(vHalf)/g_ProjectionAspect, P11 = -cot(vHalf), clip from +0xDC/+0xE0 -- ignores cam+0xE4"
+009ccd54,L,g_ProjectionAspect,Camera,high,"Global aspect: horizontal projection scale (Cam_BuildProjection) and multiplier of the FOV setters aspect argument"

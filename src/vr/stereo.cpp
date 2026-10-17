@@ -1,0 +1,375 @@
+#include "stereo.h"
+
+#include "openvr_session.h"
+#include "../core/addresses.h"
+#include "../core/dev_flags.h"
+#include "../core/log.h"
+#include "../hooks/vmt_shadow.h"
+
+#include <windows.h>
+#include <d3d11.h>
+
+#include <cmath>
+#include <cstring>
+
+namespace avp::stereo {
+namespace {
+
+constexpr const char* kLog = "avpvr_stereo.log";
+
+// Game functions (all cdecl, verified: plain RET) and the camera apply (thiscall(this, entity), RET 4).
+using PFN_SetVec = void(__cdecl*)(float* v);
+using PFN_SetFov = void(__cdecl*)(float fullAngle, float aspectScale);
+using PFN_BeginFrame = void(__cdecl*)(char clear);
+using PFN_RenderScene = void(__cdecl*)();
+using PFN_CamApply = void(__thiscall*)(void* self, void* entity);
+
+const auto SetPosition = reinterpret_cast<PFN_SetVec>(addr::Cam_SetPosition);
+const auto SetRotation = reinterpret_cast<PFN_SetVec>(addr::Cam_SetRotationMatrix);
+const auto SetHorizontalFov = reinterpret_cast<PFN_SetFov>(addr::Cam_SetHorizontalFov);
+const auto BeginFrame = reinterpret_cast<PFN_BeginFrame>(addr::Frame_BeginFrame);
+const auto RenderScene = reinterpret_cast<PFN_RenderScene>(addr::Frame_RenderScene);
+const auto OriginalCamApply = reinterpret_cast<PFN_CamApply>(addr::CamComp_ApplyToRenderCamera);
+
+constexpr uintptr_t kBaseAspect = 0x009CCD54; // float multiplied by the FOV setters' aspect scale
+
+// ---- Per-frame state (main thread only) ----
+bool g_stereoFrame = false;   // left eye camera applied this frame, right eye pending at Present
+bool g_posesWaited = false;   // WaitGetPoses already called for this frame
+vr::Pose g_head{};
+ViewCamera g_base;            // the game's own camera this frame
+bool g_haveRefYaw = false;
+float g_refYaw = 0.0f;        // head yaw at the first stereo frame (recenter reference)
+unsigned g_stereoFrames = 0;
+float g_gameAspect = 0.0f;         // the game's global aspect (009CCD54) before VR changed it
+float g_lastWrittenAspect = -1.0f; // what VR last wrote there
+
+ID3D11Texture2D* g_eyeTex[2] = {};
+ID3D11Texture2D* g_screenTex = nullptr;
+ID3D11Texture2D* g_blackTex = nullptr;
+UINT g_texW = 0, g_texH = 0;
+
+struct EyeCamera
+{
+    float pos[3];
+    float rot[9];
+    float fullHFov;
+    float aspect; // tanH / tanV
+    float bounds[4]; // uMin vMin uMax vMax
+    float hudViewport[4]; // HUD panel in the eye's render: scaleX scaleY offsetX offsetY (cam+0x3C layout)
+};
+
+// The game's own HUD viewport (cam+0x3C) and whether VR changed it, for the flat frames.
+float g_gameViewport[4] = {1.0f, 1.0f, 0.0f, 0.0f};
+bool g_viewportChanged = false;
+
+using PFN_IsPausedMenu = bool(__cdecl*)();
+const auto IsPausedWithMenu = reinterpret_cast<PFN_IsPausedMenu>(addr::Game_IsPausedWithMenu);
+
+// ---- Engine angle convention: (pitch, yaw, roll), exact copies of FUN_004EFD20 / Cam_SetRotationQuat ----
+void EulerToQuat(const float a[3], float q[4])
+{
+    const float c0 = std::cos(a[0] * 0.5f), s0 = std::sin(a[0] * 0.5f);
+    const float c1 = std::cos(a[1] * 0.5f), s1 = std::sin(a[1] * 0.5f);
+    const float c2 = std::cos(a[2] * 0.5f), s2 = std::sin(a[2] * 0.5f);
+    q[0] = c2 * c1 * s0 + s2 * s1 * c0;
+    q[1] = c2 * s1 * c0 - s2 * c1 * s0;
+    q[2] = s2 * c1 * c0 - c2 * s1 * s0;
+    q[3] = c2 * c1 * c0 + s2 * s1 * s0;
+}
+
+void QuatToRot(const float q[4], float m[9])
+{
+    const float x = q[0], y = q[1], z = q[2], w = q[3];
+    const float z2 = z * 2.0f, y2 = y * 2.0f, wx2 = w * x * 2.0f, zz2 = z * z2, xx2 = x * x * 2.0f;
+    m[0] = 1.0f - (zz2 + y * y2);
+    m[1] = x * y2 - w * z2;
+    m[2] = x * z2 + w * y2;
+    m[3] = x * y2 + w * z2;
+    m[4] = 1.0f - (zz2 + xx2);
+    m[5] = y * z2 - wx2;
+    m[6] = x * z2 - w * y2;
+    m[7] = y * z2 + wx2;
+    m[8] = 1.0f - (y * y2 + xx2);
+}
+
+// Head yaw/pitch/roll from the OpenVR pose (forward = -Z column, up = +Y column, right = +X column).
+void HeadAngles(const vr::Pose& p, float& yaw, float& pitch, float& roll)
+{
+    const float fx = -p.m[0][2], fy = -p.m[1][2], fz = -p.m[2][2];
+    yaw = std::atan2(-fx, -fz);                                   // + = turned left
+    pitch = std::asin(fy < -1.0f ? -1.0f : fy > 1.0f ? 1.0f : fy); // + = looking up
+    roll = std::atan2(p.m[1][0], p.m[1][1]);                      // + = right side up (head tilted left)
+}
+
+// eye 0/1 = left/right; eye -1 = head centre (no offset, frustum covering both eyes scaled by fovScale).
+EyeCamera BuildEye(int eye, float fovScale = 1.0f)
+{
+    EyeCamera c{};
+    float headYaw, headPitch, headRoll;
+    HeadAngles(g_head, headYaw, headPitch, headRoll);
+    float relYaw = headYaw - g_refYaw;
+
+    float angles[3];
+    angles[0] = dev::kHeadPitchSign * headPitch + (dev::kAddGamePitch ? g_base.pitch : 0.0f);
+    angles[1] = g_base.yaw + dev::kHeadYawSign * relYaw;
+    angles[2] = dev::kHeadRollSign * headRoll;
+    float q[4];
+    EulerToQuat(angles, q);
+    QuatToRot(q, c.rot);
+
+    // Eye position: base position + camera right axis (rotation column 0) * the eye's half-IPD.
+    vr::EyeGeometry g = vr::Eye(eye < 0 ? 0 : eye);
+    if (eye < 0)
+    {
+        // Head centre: union of both eyes' frusta (the right eye mirrors the left), no offset.
+        const vr::EyeGeometry& r = vr::Eye(1);
+        g.tanLeft = std::fmin(g.tanLeft, r.tanLeft);
+        g.tanRight = std::fmax(g.tanRight, r.tanRight);
+        g.tanTop = std::fmin(g.tanTop, r.tanTop);
+        g.tanBottom = std::fmax(g.tanBottom, r.tanBottom);
+        g.offset[0] = 0.0f;
+    }
+    const float side = g.offset[0] * dev::kWorldUnitsPerMeter * dev::kEyeRightSign;
+    c.pos[0] = g_base.pos[0] + c.rot[0] * side;
+    c.pos[1] = g_base.pos[1] + c.rot[3] * side;
+    c.pos[2] = g_base.pos[2] + c.rot[6] * side;
+
+    // Symmetric frustum covering the eye's asymmetric one; Submit bounds crop it back.
+    float tanH = (std::fabs(g.tanLeft) > std::fabs(g.tanRight) ? std::fabs(g.tanLeft) : std::fabs(g.tanRight));
+    float tanV = (std::fabs(g.tanTop) > std::fabs(g.tanBottom) ? std::fabs(g.tanTop) : std::fabs(g.tanBottom));
+    if (eye < 0)
+    {
+        tanH *= fovScale;
+        tanV *= fovScale;
+    }
+    c.fullHFov = 2.0f * std::atan(tanH);
+    c.aspect = tanH / tanV;
+    // OpenVR's raw projection: the image's TOP edge is at tan = tanBottom and its bottom edge at tan = tanTop (y up;
+    // from OpenVR's ComposeProjection, and the MOHW mod's "Top/Bottom transposed" note). Texture v = 0 is the top.
+    // (First build mapped v from tanTop -> stretch looking up / squash looking down on the asymmetric frustum.)
+    c.bounds[0] = (g.tanLeft / tanH + 1.0f) * 0.5f;
+    c.bounds[1] = (1.0f - g.tanBottom / tanV) * 0.5f;
+    c.bounds[2] = (g.tanRight / tanH + 1.0f) * 0.5f;
+    c.bounds[3] = (1.0f - g.tanTop / tanV) * 0.5f;
+
+    // HUD panel: 16:9, centred on straight ahead (u = v = 0.5 in the symmetric render, the same direction in both
+    // eyes -> the HUD sits at infinity), kHudHalfWidthDeg either side. Drawn through the engine's per-view HUD
+    // viewport (Gui_MapRectToViewViewport: screen * scale + offset), which the 3D scene ignores.
+    const float hudTanW = std::tan(dev::kHudHalfWidthDeg * 0.01745329252f);
+    const float hudTanH = hudTanW * (9.0f / 16.0f);
+    c.hudViewport[0] = hudTanW / tanH;                  // scaleX
+    c.hudViewport[1] = hudTanH / tanV;                  // scaleY
+    c.hudViewport[2] = 0.5f - c.hudViewport[0] * 0.5f;  // offsetX
+    c.hudViewport[3] = 0.5f - c.hudViewport[1] * 0.5f;  // offsetY
+    return c;
+}
+
+void ApplyEye(const EyeCamera& c)
+{
+    ViewCamera* views = ViewCameras();
+    Global<uintptr_t>(addr::g_CurViewCamera) = reinterpret_cast<uintptr_t>(&views[0]);
+    Global<int>(addr::g_CurViewIndex) = 0;
+    Global<uint8_t>(addr::g_CurViewMask) = 1;
+    float pos[3] = {c.pos[0], c.pos[1], c.pos[2]};
+    float rot[9];
+    std::memcpy(rot, c.rot, sizeof(rot));
+    SetRotation(rot);
+    SetPosition(pos);
+    // The projection builder (FUN_004FA900) takes the horizontal scale from the GLOBAL aspect at 009CCD54, not the
+    // camera's +0xE4: P00 = cot(vHalf) / g_aspect, P11 = -cot(vHalf). So the global must hold this eye's aspect while
+    // it renders, or the image comes out far wider than the crop assumes (first builds: horizontal squeeze, yaw
+    // stretch, roll "morph", and culling at the eye edges because the culling frustum used +0xEC/+0xFC). The FOV
+    // setter multiplies its aspect argument by the same global, hence 1.0.
+    float& globalAspect = Global<float>(kBaseAspect);
+    if (globalAspect != g_lastWrittenAspect)
+        g_gameAspect = globalAspect; // the game (re)wrote it: remember its value for the flat frames
+    globalAspect = c.aspect;
+    g_lastWrittenAspect = c.aspect;
+    SetHorizontalFov(c.fullHFov, 1.0f);
+
+    // HUD into its panel (remember the game's own viewport the first time).
+    float* vp = views[0].viewport;
+    if (!g_viewportChanged)
+    {
+        std::memcpy(g_gameViewport, vp, sizeof(g_gameViewport));
+        g_viewportChanged = true;
+    }
+    std::memcpy(vp, c.hudViewport, sizeof(c.hudViewport));
+    Global<uint8_t>(addr::g_CameraDirty) = 1;
+}
+
+// Flat frames show the game's own image: give the global aspect and HUD viewport back if they still hold ours.
+void RestoreGameAspect()
+{
+    float& globalAspect = Global<float>(kBaseAspect);
+    if (g_gameAspect > 0.0f && g_lastWrittenAspect > 0.0f && globalAspect == g_lastWrittenAspect)
+    {
+        globalAspect = g_gameAspect;
+        g_lastWrittenAspect = -1.0f;
+    }
+    if (g_viewportChanged)
+    {
+        std::memcpy(ViewCameras()[0].viewport, g_gameViewport, sizeof(g_gameViewport));
+        g_viewportChanged = false;
+        Global<uint8_t>(addr::g_CameraDirty) = 1;
+    }
+}
+
+bool EnsureTextures(ID3D11Device* device, ID3D11Resource* backBuffer)
+{
+    ID3D11Texture2D* bb = nullptr;
+    if (FAILED(backBuffer->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&bb))) || !bb)
+        return false;
+    D3D11_TEXTURE2D_DESC d{};
+    bb->GetDesc(&d);
+    bb->Release();
+    if (g_eyeTex[0] && d.Width == g_texW && d.Height == g_texH)
+        return true;
+    for (ID3D11Texture2D** t : {&g_eyeTex[0], &g_eyeTex[1], &g_screenTex})
+        if (*t)
+        {
+            (*t)->Release();
+            *t = nullptr;
+        }
+    d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    d.MiscFlags = 0;
+    d.CPUAccessFlags = 0;
+    d.Usage = D3D11_USAGE_DEFAULT;
+    d.MipLevels = 1;
+    d.ArraySize = 1;
+    for (ID3D11Texture2D** t : {&g_eyeTex[0], &g_eyeTex[1], &g_screenTex})
+        if (FAILED(device->CreateTexture2D(&d, nullptr, t)))
+            return false;
+    if (!g_blackTex)
+    {
+        D3D11_TEXTURE2D_DESC b = d;
+        b.Width = b.Height = 16;
+        static uint32_t zeros[16 * 16] = {};
+        D3D11_SUBRESOURCE_DATA init{zeros, 16 * 4, 0};
+        device->CreateTexture2D(&b, &init, &g_blackTex);
+    }
+    g_texW = d.Width;
+    g_texH = d.Height;
+    AVP_LOG(kLog, "eye/screen textures %ux%u format %u", g_texW, g_texH, d.Format);
+    return true;
+}
+
+// Camera apply replacement (shadow vtable slot +0x08 of the player camera component). Main thread, once per frame,
+// before the scene render.
+void __fastcall CamApplyReplacement(void* self, void* /*edx*/, void* entity)
+{
+    OriginalCamApply(self, entity);
+    vr::TryConnect();
+    if (!dev::kVrEnabled || !vr::IsConnected() || g_stereoFrame)
+        return;
+    // Cutscenes and the in-game (pause) menu go to the flat screen -- with the game's own aspect and HUD viewport
+    // already back for this frame's render.
+    if (Global<uint8_t>(addr::g_CinematicActive) || IsPausedWithMenu())
+    {
+        RestoreGameAspect();
+        return;
+    }
+
+    g_head = vr::WaitPoses();
+    g_posesWaited = true;
+    if (!g_head.valid)
+        return;
+
+    std::memcpy(&g_base, &ViewCameras()[0], sizeof(ViewCamera));
+    if (!g_haveRefYaw)
+    {
+        float y, p, r;
+        HeadAngles(g_head, y, p, r);
+        g_refYaw = y;
+        g_haveRefYaw = true;
+        AVP_LOG(kLog, "recentered: head yaw reference %.1f deg", y * 57.29578f);
+    }
+    ApplyEye(BuildEye(0));
+    g_stereoFrame = true;
+}
+
+void LogFrame(const EyeCamera& l, const EyeCamera& r)
+{
+    float hy, hp, hr;
+    HeadAngles(g_head, hy, hp, hr);
+    const ViewCamera& v = ViewCameras()[0];
+    AVP_LOG(kLog,
+            "stereo frame %u: head yaw/pitch/roll %.1f/%.1f/%.1f deg, base yaw %.1f pitch %.1f, base pos (%.2f %.2f %.2f), "
+            "L pos (%.3f %.3f %.3f) R pos (%.3f %.3f %.3f), cam fov h/v %.1f/%.1f aspect %.3f, bounds L %.3f..%.3f x "
+            "%.3f..%.3f",
+            g_stereoFrames, hy * 57.3f, hp * 57.3f, hr * 57.3f, g_base.yaw * 57.3f, g_base.pitch * 57.3f, g_base.pos[0],
+            g_base.pos[1], g_base.pos[2], l.pos[0], l.pos[1], l.pos[2], r.pos[0], r.pos[1], r.pos[2],
+            2 * v.hHalfFov * 57.3f, 2 * v.vHalfFov * 57.3f, v.aspect, l.bounds[0], l.bounds[2], l.bounds[1],
+            l.bounds[3]);
+}
+
+} // namespace
+
+void Register()
+{
+    RegisterShadowReplacement(addr::CamComp_ApplyToRenderCamera, reinterpret_cast<void*>(&CamApplyReplacement));
+}
+
+void OnPresent(IDXGISwapChain*, unsigned& syncInterval)
+{
+    vr::TryConnect();
+    if (!dev::kVrEnabled || !vr::IsConnected())
+        return;
+    syncInterval = 0; // WaitGetPoses paces the frame
+    if (dev::kDiagRenderEverything)
+        Global<uint8_t>(addr::cvar_RenderEverything) = 1;
+
+    auto* device = reinterpret_cast<ID3D11Device*>(Global<uintptr_t>(addr::g_D3DDevice));
+    auto* ctx = reinterpret_cast<ID3D11DeviceContext*>(Global<uintptr_t>(addr::g_D3DContext));
+    auto* backBuffer = reinterpret_cast<ID3D11Resource*>(Global<uintptr_t>(addr::g_BackBuffer));
+    auto* scene = reinterpret_cast<ID3D11Resource*>(Global<uintptr_t>(addr::g_SceneTarget));
+    if (!device || !ctx || !backBuffer || !scene || !EnsureTextures(device, backBuffer))
+        return;
+
+    if (g_stereoFrame)
+    {
+        g_stereoFrame = false;
+        const EyeCamera left = BuildEye(0), right = BuildEye(1);
+
+        // Left eye = the frame the game just rendered with the left camera.
+        ctx->CopyResource(g_eyeTex[0], backBuffer);
+
+        // Right eye = a second render (job-batch join skipped: already joined by the first render).
+        ApplyEye(right);
+        int& kickFrame = Global<int>(addr::g_JobBatchKickFrame);
+        const int savedKick = kickFrame;
+        if (kickFrame == Global<int>(addr::g_FrameCounter))
+            kickFrame = savedKick - 1;
+        BeginFrame(1);
+        RenderScene();
+        kickFrame = savedKick;
+        ctx->CopyResource(g_eyeTex[1], scene);
+
+        if (g_stereoFrames++ < 3 || g_stereoFrames % 600 == 0)
+            LogFrame(left, right);
+
+        // Leave a head-centred, wider camera in place until the game's next camera update overwrites it: parts of the
+        // engine's visibility work (per-frame visibility caches, LOD/animation culling) run during the next frame's
+        // update, BEFORE the camera apply. With the game's own camera restored here (first build), they culled for the
+        // game camera's direction, and objects popped at the eye edges whenever the head pointed elsewhere.
+        ApplyEye(BuildEye(-1, dev::kPersistentCameraFovMargin));
+
+        vr::HideScreen();
+        vr::SubmitEyes(g_eyeTex[0], left.bounds, g_eyeTex[1], right.bounds);
+    }
+    else
+    {
+        // Flat: the game's frame on the virtual screen, black in the eyes.
+        RestoreGameAspect();
+        if (!g_posesWaited)
+            g_head = vr::WaitPoses();
+        ctx->CopyResource(g_screenTex, backBuffer);
+        vr::ShowScreen(g_screenTex, 1.0f, g_head);
+        static const float full[4] = {0, 0, 1, 1};
+        vr::SubmitEyes(g_blackTex, full, g_blackTex, full);
+    }
+    g_posesWaited = false;
+}
+
+} // namespace avp::stereo

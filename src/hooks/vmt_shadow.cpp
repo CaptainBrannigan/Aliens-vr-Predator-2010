@@ -92,6 +92,22 @@ ShadowClass g_classes[] = {
 };
 constexpr int kClassCount = static_cast<int>(sizeof(g_classes) / sizeof(g_classes[0]));
 
+struct Replacement
+{
+    uintptr_t original;
+    void* replacement;
+};
+Replacement g_replacements[16];
+int g_replacementCount = 0;
+
+void* ReplacementFor(uintptr_t original)
+{
+    for (int i = 0; i < g_replacementCount; ++i)
+        if (g_replacements[i].original == original)
+            return g_replacements[i].replacement;
+    return nullptr;
+}
+
 bool BuildShadow(ShadowClass& c)
 {
     const auto* original = reinterpret_cast<const uintptr_t*>(c.vtable);
@@ -114,7 +130,14 @@ bool BuildShadow(ShadowClass& c)
     for (int i = 0; i < n; ++i)
     {
         c.shadow[i] = original[i];
-        if (void* stub = TraceShadowStub(original[i]))
+        if (void* repl = ReplacementFor(original[i]))
+        {
+            c.shadow[i] = reinterpret_cast<uintptr_t>(repl);
+            ++c.replaced;
+            AVP_LOG(kLog, "%s: slot %d (+0x%02X) %08X -> replacement %p", c.name, i, i * 4,
+                    static_cast<unsigned>(original[i]), repl);
+        }
+        else if (void* stub = TraceShadowStub(original[i]))
         {
             c.shadow[i] = reinterpret_cast<uintptr_t>(stub);
             ++c.replaced;
@@ -237,6 +260,12 @@ void ScannerLoop()
 }
 
 } // namespace
+
+void RegisterShadowReplacement(uintptr_t originalFunction, void* replacement)
+{
+    if (g_replacementCount < 16)
+        g_replacements[g_replacementCount++] = {originalFunction, replacement};
+}
 
 void StartVmtShadow()
 {

@@ -61,6 +61,29 @@ constexpr bool kTwoViewExperiment = false;
 
 // EXPERIMENT: render the 3D frame a second time per frame from the Present hook, camera yawed 30 degrees; the screen
 // shows the normal frame's left half and the second render's right half (hooks/render_twice_experiment.h).
-constexpr bool kRenderTwiceExperiment = true;
+constexpr bool kRenderTwiceExperiment = false; // superseded by vr/stereo.cpp
+
+// ---- VR (vr/openvr_session.cpp, vr/stereo.cpp) ----
+// First SteamVR build: these move to the overlay once it exists; signs are verified in the headset.
+constexpr bool kVrEnabled = true;
+constexpr float kHeadYawSign = -1.0f;  // engine yaw direction vs. head turn (verified in headset 2026-10-16)
+constexpr float kHeadPitchSign = 1.0f; // engine pitch direction vs. looking up (verified)
+// Engine axes are mirrored left/right vs. OpenVR (yaw flips, pitch doesn't), and that mirror flips roll too:
+// (-1, +1, -1) is the exact mapping for any head orientation. The "roll looks wrong" reports at -1 came from the
+// horizontal projection mismatch (fixed via the global aspect), not the sign.
+constexpr float kHeadRollSign = -1.0f;
+// The camera left in place between frames (for the engine's pre-camera-update visibility work) has this much wider
+// a frustum than the eyes (tangent scale), so head motion during the next frame's update stays covered.
+constexpr float kPersistentCameraFovMargin = 1.3f;
+// DIAGNOSTIC: force the engine's Visibility.RenderEverything cvar on while VR runs, to tell whether the remaining
+// edge culling comes from the visibility system (deciding with the game's own camera) or from something else.
+// Off again: the culling at the eye edges was the culling frustum (+0xEC/+0xFC) being narrower than the actual
+// projection (global aspect). Turn on only if edge culling comes back.
+constexpr bool kDiagRenderEverything = false;
+// HUD panel half width in degrees (16:9 panel straight ahead, both eyes).
+constexpr float kHudHalfWidthDeg = 30.0f;
+constexpr float kEyeRightSign = 1.0f;  // flip if the stereo depth looks inverted (eyes swapped)
+constexpr bool kAddGamePitch = false;  // view pitch = head pitch only (true: + the game's look pitch)
+constexpr float kWorldUnitsPerMeter = 1.0f; // assumption: engine units are meters
 
 } // namespace avp::dev

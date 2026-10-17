@@ -18,6 +18,7 @@
 #include "../hooks/trace_hooks.h"
 #include "../hooks/two_view_experiment.h"
 #include "../hooks/vmt_shadow.h"
+#include "../vr/stereo.h"
 
 #include <MinHook.h>
 #include <windows.h>
@@ -71,6 +72,7 @@ void InitializeMod()
     AVP_LOG(kLog, "%d trace hooks installed -- see avpvr_trace.log", hooks);
     avp::StartTraceSummaryThread();
     avp::StartSnapshotThread();
+    avp::stereo::Register(); // camera-apply replacement in the shadow vtables (VR eye cameras)
     avp::StartVmtShadow(); // per-object shadow vtables (CEG-safe virtual hooks) -- see avpvr_shadow.log
     avp::StartD3DProbe();  // draw/viewport/present counts from hooks in d3d11/dxgi -- see avpvr_d3d.log
     avp::StartRenderTwiceExperiment();

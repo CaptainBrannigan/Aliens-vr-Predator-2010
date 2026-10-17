@@ -1,6 +1,7 @@
 #include "d3d_probe.h"
 
 #include "render_twice_experiment.h"
+#include "../vr/stereo.h"
 #include "../core/addresses.h"
 #include "../core/log.h"
 
@@ -228,8 +229,10 @@ HRESULT STDMETHODCALLTYPE Hook_Present(IDXGISwapChain* sc, UINT sync, UINT flags
         g_viewCountChanged = false;
         g_secondStart = now;
     }
-    RenderTwiceOnPresent(sc); // experiment; draws it issues are counted in the next frame
-    return g_realPresent(sc, sync, flags);
+    RenderTwiceOnPresent(sc); // old experiment (off); draws it issues are counted in the next frame
+    unsigned syncInterval = sync;
+    stereo::OnPresent(sc, syncInterval); // VR: second eye render + submit, or the flat screen
+    return g_realPresent(sc, syncInterval, flags);
 }
 
 template <typename T>

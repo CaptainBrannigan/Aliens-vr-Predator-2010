@@ -84,6 +84,8 @@
     <ClCompile Include="hooks\trace_hooks.cpp" />
     <ClCompile Include="hooks\snapshot.cpp" />
     <ClCompile Include="hooks\d3d_probe.cpp" />
+    <ClCompile Include="vr\openvr_session.cpp" />
+    <ClCompile Include="vr\stereo.cpp" />
     <ClCompile Include="hooks\render_twice_experiment.cpp" />
     <ClCompile Include="hooks\vmt_shadow.cpp" />
     <ClCompile Include="hooks\two_view_experiment.cpp" />
@@ -101,6 +103,8 @@
     <ClInclude Include="hooks\trace_hooks.h" />
     <ClInclude Include="hooks\snapshot.h" />
     <ClInclude Include="hooks\d3d_probe.h" />
+    <ClInclude Include="vr\openvr_session.h" />
+    <ClInclude Include="vr\stereo.h" />
     <ClInclude Include="hooks\render_twice_experiment.h" />
     <ClInclude Include="hooks\vmt_shadow.h" />
     <ClInclude Include="hooks\two_view_experiment.h" />

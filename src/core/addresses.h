@@ -49,6 +49,9 @@ constexpr uintptr_t Frame_BeginFrame             = 0x00808DA0; // cdecl(char cle
 constexpr uintptr_t Frame_RenderScene            = 0x0080A440; // cdecl(): Scene_RenderFrame(*(0x00A71C50))
 constexpr uintptr_t Scene_RenderFrame            = 0x00808E00; // the whole 3D frame: ~30 subsystem passes
 constexpr uintptr_t Frame_EndFrame               = 0x0080A0E0; // -> Render_EndFrame -> present
+// cdecl() -> bool: (paused 009E14A8 || time scale 009E1484 <= 0) && menu up (FUN_0079C4D0) && !00A71E27.
+// Scene_RenderFrame skips a player draw step when it's true. VR: in-game menu frames go to the flat screen.
+constexpr uintptr_t Game_IsPausedWithMenu        = 0x0080A450;
 
 // ---- Multi-view ----
 constexpr uintptr_t View_ForEachUpdateObjects    = 0x00662780;
