@@ -54,6 +54,14 @@ unsigned RecenterCount();
 // The thread that presents (diagnostics).
 unsigned long PresentThread();
 
+// A hand pose from vr/vr_input.h (OpenVR tracking space) in the game's world: relative to the head, through the
+// player frame, from the game camera's position. rot = 3x3 row-major, columns = right, down, forward (the engine's
+// convention); pos = world position. False without a player frame (head aim off) or head pose.
+bool HandToWorld(const float pose[3][4], float rot[9], float pos[3]);
+
+// The game's own camera this frame (as its camera apply left it): rotation (columns right, down, forward), position.
+void GameCamera(float rot[9], float pos[3]);
+
 // Any thread: the next stereo frame takes the current head yaw as straight ahead.
 void RequestRecenter();
 

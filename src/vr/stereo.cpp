@@ -423,6 +423,43 @@ bool HeadRotation(float m[9])
 
 unsigned RecenterCount() { return g_recenterCount; }
 
+bool HandToWorld(const float pose[3][4], float rot[9], float pos[3])
+{
+    float frame[9];
+    if (!g_head.valid || !g_haveRefYaw || !aim::PlayerFrame(frame))
+        return false;
+    // Room vector -> recentred room (the reference yaw removed about +y) -> engine local (x, -y, -z: OpenVR -> engine
+    // is a 180-degree turn about x) -> world through the player frame (columns right, down, forward).
+    const float c = std::cos(-g_refYaw), s = std::sin(-g_refYaw);
+    auto toWorld = [&](float vx, float vy, float vz, float out[3]) {
+        const float x = vx * c + vz * s, y = vy, z = -vx * s + vz * c;
+        const float l[3] = {x, -y, -z};
+        for (int i = 0; i < 3; ++i)
+            out[i] = frame[i * 3 + 0] * l[0] + frame[i * 3 + 1] * l[1] + frame[i * 3 + 2] * l[2];
+    };
+    float offset[3];
+    toWorld(pose[0][3] - g_head.m[0][3], pose[1][3] - g_head.m[1][3], pose[2][3] - g_head.m[2][3], offset);
+    for (int i = 0; i < 3; ++i)
+        pos[i] = g_base.pos[i] + offset[i] * dev::kWorldUnitsPerMeter;
+    float right[3], down[3], forward[3];
+    toWorld(pose[0][0], pose[1][0], pose[2][0], right);      // the controller's +x
+    toWorld(-pose[0][1], -pose[1][1], -pose[2][1], down);    // -y
+    toWorld(-pose[0][2], -pose[1][2], -pose[2][2], forward); // -z
+    for (int i = 0; i < 3; ++i)
+    {
+        rot[i * 3 + 0] = right[i];
+        rot[i * 3 + 1] = down[i];
+        rot[i * 3 + 2] = forward[i];
+    }
+    return true;
+}
+
+void GameCamera(float rot[9], float pos[3])
+{
+    std::memcpy(rot, g_base.rot, sizeof(g_base.rot));
+    std::memcpy(pos, g_base.pos, sizeof(g_base.pos));
+}
+
 unsigned long PresentThread() { return g_presentThread; }
 
 bool HeadAnglesDeg(float out[3])
@@ -489,8 +526,21 @@ void OnPresent(IDXGISwapChain*, unsigned& syncInterval)
         // objective never completed in VR (whatever turned the view); with the game's camera it does, and no pop-in.
         // (That wide camera was added before the projection fix and head aim, against pop-in at the eye edges that
         // came from those bugs: the culling frustum narrower than the drawing, the game camera pointing elsewhere.)
+        // EyeFovBetweenFrames (default): the game's position and orientation, but the eyes' field of view and aspect,
+        // so that visibility work covers what the eyes show (2026-10-17: with the game's own ~85 x 54 deg frustum
+        // there was some pop-in at the edges).
         std::memcpy(&ViewCameras()[0], &g_base, sizeof(ViewCamera));
-        RestoreGameAspect();
+        if (settings::EyeFovBetweenFrames())
+        {
+            EyeCamera wide = BuildEye(0); // its symmetric frustum covers both eyes (the right one mirrors the left)
+            std::memcpy(wide.rot, g_base.rot, sizeof(wide.rot));
+            std::memcpy(wide.pos, g_base.pos, sizeof(wide.pos));
+            ApplyEye(wide);
+        }
+        else
+        {
+            RestoreGameAspect();
+        }
         Global<uint8_t>(addr::g_CameraDirty) = 1;
 
         vr::HideScreen();

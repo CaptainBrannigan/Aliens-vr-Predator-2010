@@ -3,9 +3,15 @@
 A VR mod for **Aliens vs Predator (2010)**, the DX11 executable (`AvP_DX11.exe`, Steam build), through in-process
 32-bit SteamVR. Loaded as a `dxgi.dll` proxy from the game folder. Progress and plans: `docs/ROADMAP.md`.
 
-## Status: v0.1 (2026-10-17)
+## Status: v0.15 (2026-10-17)
 
-**Head look and stereo are complete** for all three species, single player and multiplayer (multiplayer not yet
+**v0.15: Marine arms on the motion controllers** (render only). Each hand sits on its controller and two-bone IK
+bends the elbows; the shoulders stay on the body. The body, torso and elbows are adjustable in the dashboard's
+**Hands** group, each hand's placement in **Left hand** / **Right hand** (cm and degrees). There's also a test option
+that puts the weapon model on the right controller (**Weapon** group). Shots still follow the head; aiming from the
+controller is next.
+
+**v0.1: head look and stereo are complete** for all three species, single player and multiplayer (multiplayer not yet
 tested with a second player). Verified in the headset:
 - **Stereo**: the game renders twice per frame (left eye, then the right eye from the Present hook), each eye with
   its own asymmetric frustum; full 3D world, lighting, culling.
@@ -22,8 +28,9 @@ tested with a second player). Verified in the headset:
 Known issue: the **multiplayer pause menu** renders in the eyes, cut off (multiplayer doesn't stop time, so it isn't
 detected as a pause; its state is logged for a fix).
 
-Not done yet: motion controls (controller aiming, weapon/hands on the controllers, melee gestures), positional
-(6DoF) head tracking, body IK.
+Not done yet: controller aiming (shots from the weapon), holsters (the weapon in whichever hand grips it), the
+game's arm animation switched off (hands locked to the controllers), Alien / Predator hands, melee gestures,
+positional (6DoF) head tracking.
 
 ## Using it
 
@@ -55,7 +62,7 @@ Logs (`avpvr_*.log`) are written next to the game; each launch keeps the previou
 |---|---|
 | `src/proxy` | `dxgi.dll` proxy entry point and exports, mod initialization |
 | `src/core` | Logger, crash forensics, build detection, `addresses.h`, `settings` (the settings table + ini), developer flags |
-| `src/hooks` | Shadow vtables (CEG-safe virtual hooks), D3D11 hooks (counts, HUD panel, debug hiding), XInput virtual pad, trace/snapshot logging, old experiments |
+| `src/hooks` | Shadow vtables (CEG-safe virtual hooks), D3D11 hooks (counts, HUD panel, debug hiding), first-person body / weapon (bone buffer rewrite: arms IK, torso turn, bone hide, weapon placement), XInput virtual pad, trace/snapshot logging, old experiments |
 | `src/vr` | SteamVR session (connection, poses, submit, flat screen), stereo rendering, dashboard tab, SteamVR Input |
 | `docs/re` | Reverse-engineering notes: `FINDINGS.md`, `FUNCTIONS.md` (generated), `TODO_AND_DECISIONS.md`, `avp_symbols.csv` |
 | `tools/ghidra` | Headless Ghidra scripts (`run.ps1` wrapper; `ApplySymbols.java` pushes the CSV names into the project) |

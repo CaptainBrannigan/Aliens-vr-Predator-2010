@@ -90,6 +90,7 @@
     <ClCompile Include="vr\vr_input.cpp" />
     <ClCompile Include="hooks\xinput_hook.cpp" />
     <ClCompile Include="hooks\quit_hook.cpp" />
+    <ClCompile Include="hooks\first_person.cpp" />
     <ClCompile Include="vr\head_aim.cpp" />
     <ClCompile Include="core\settings.cpp" />
     <ClCompile Include="hooks\render_twice_experiment.cpp" />
@@ -115,6 +116,7 @@
     <ClInclude Include="vr\vr_input.h" />
     <ClInclude Include="hooks\xinput_hook.h" />
     <ClInclude Include="hooks\quit_hook.h" />
+    <ClInclude Include="hooks\first_person.h" />
     <ClInclude Include="vr\head_aim.h" />
     <ClInclude Include="core\settings.h" />
     <ClInclude Include="hooks\hud_passes.h" />

@@ -30,4 +30,7 @@ void Register();
 // the player frame), which the game's camera was built from. False otherwise (the eye camera then uses the game's yaw).
 bool PlayerFrame(float m[9], float look[9] = nullptr);
 
+// The local player's character as last seen by a look update (any thread; nullptr before the first). Diagnostics.
+void* LocalCharacter();
+
 } // namespace avp::aim

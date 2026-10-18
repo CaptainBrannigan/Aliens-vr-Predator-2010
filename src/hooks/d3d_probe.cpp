@@ -2,6 +2,7 @@
 
 #include "render_twice_experiment.h"
 #include "hud_passes.h"
+#include "first_person.h"
 #include "quit_hook.h"
 #include "../vr/stereo.h"
 #include "../core/settings.h"
@@ -599,7 +600,7 @@ void NoteCopyIntoMain(bool region, ID3D11Resource* src, UINT x, UINT y)
     g_copyKinds[g_copyKindCount++] = {region, key, x, y, d.Width, d.Height, 1};
 }
 
-bool HudBeforeDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count)
+bool HudBeforeDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count, UINT start, INT base)
 {
     const bool inEye = stereo::InEyeRender();
     if (!inEye && !stereo::StereoActive())
@@ -620,6 +621,8 @@ bool HudBeforeDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count)
         ++g_passDrawsSecond[pass];
     else
         NoteUnlistedDraw(c, esp, inEye);
+    if (inEye)
+        fp::OnDraw(c, pass, g_drawInPass, count, start, base, g_secondRender);
 
     if (settings::HideDuplicateTracker() && Global<int>(addr::g_PlayerSpecies) == 2)
     {
@@ -703,7 +706,7 @@ void STDMETHODCALLTYPE Hook_OMSetRenderTargets(ID3D11DeviceContext* c, UINT n, I
     ApplyHudViewport(c);
 }
 // true = skip the draw (debug hide)
-inline bool CountDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count)
+inline bool CountDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count, UINT start = 0, INT base = 0)
 {
     if (g_presentThread && GetCurrentThreadId() != g_presentThread)
     {
@@ -715,14 +718,14 @@ inline bool CountDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count)
     ++g_frame.drawsView[view == 0 ? 0 : view == 1 ? 1 : 2];
     if ((++g_drawSample & 31) == 0)
         SampleDrawCallers(esp);
-    return HudBeforeDraw(c, esp, count);
+    return HudBeforeDraw(c, esp, count, start, base);
 }
 
 #define DRAW_ESP reinterpret_cast<uintptr_t>(_AddressOfReturnAddress())
 
 void STDMETHODCALLTYPE Hook_DrawIndexed(ID3D11DeviceContext* c, UINT count, UINT start, INT base)
 {
-    if (!CountDraw(c, DRAW_ESP, count))
+    if (!CountDraw(c, DRAW_ESP, count, start, base))
         g_realDrawIndexed(c, count, start, base);
 }
 void STDMETHODCALLTYPE Hook_Draw(ID3D11DeviceContext* c, UINT count, UINT start)
@@ -732,7 +735,7 @@ void STDMETHODCALLTYPE Hook_Draw(ID3D11DeviceContext* c, UINT count, UINT start)
 }
 void STDMETHODCALLTYPE Hook_DrawIndexedInstanced(ID3D11DeviceContext* c, UINT a, UINT b, UINT d, INT e, UINT f)
 {
-    if (!CountDraw(c, DRAW_ESP, a))
+    if (!CountDraw(c, DRAW_ESP, a, d, e))
         g_realDrawIndexedInstanced(c, a, b, d, e, f);
 }
 void STDMETHODCALLTYPE Hook_DrawInstanced(ID3D11DeviceContext* c, UINT a, UINT b, UINT d, UINT e)
@@ -942,6 +945,7 @@ HRESULT STDMETHODCALLTYPE Hook_Present(IDXGISwapChain* sc, UINT sync, UINT flags
     }
     RenderTwiceOnPresent(sc); // old experiment (off); draws it issues are counted in the next frame
     unsigned syncInterval = sync;
+    fp::OnPresent(reinterpret_cast<ID3D11DeviceContext*>(Global<uintptr_t>(addr::g_D3DContext)));
     stereo::OnPresent(sc, syncInterval); // VR: second eye render + submit, or the flat screen
     return g_realPresent(sc, syncInterval, flags);
 }
@@ -979,6 +983,7 @@ void ProbeThread()
                             &g_realRSSetViewports, "RSSetViewports");
             HookVtableEntry(ctx, kCtxRSSetScissorRects, reinterpret_cast<void*>(&Hook_RSSetScissorRects),
                             &g_realRSSetScissorRects, "RSSetScissorRects");
+            fp::Install(ctx);
             HookVtableEntry(ctx, kCtxPSSetShaderResources, reinterpret_cast<void*>(&Hook_PSSetShaderResources),
                             &g_realPSSetShaderResources, "PSSetShaderResources");
             HookVtableEntry(ctx, kCtxCopyResource, reinterpret_cast<void*>(&Hook_CopyResource), &g_realCopyResource,

@@ -7,6 +7,8 @@
 #include <openvr.h>
 
 #include <atomic>
+#include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -210,6 +212,14 @@ bool WriteTextFile(const std::string& path, const std::string& text)
 ::vr::VRActionHandle_t g_move = ::vr::k_ulInvalidActionHandle, g_turn = ::vr::k_ulInvalidActionHandle;
 ::vr::VRActionHandle_t g_trigger[2] = {::vr::k_ulInvalidActionHandle, ::vr::k_ulInvalidActionHandle}; // left, right
 ::vr::VRActionHandle_t g_recenter = ::vr::k_ulInvalidActionHandle;
+::vr::VRActionHandle_t g_palm[2] = {::vr::k_ulInvalidActionHandle, ::vr::k_ulInvalidActionHandle}; // left, right
+::vr::VRActionHandle_t g_aim[2] = {::vr::k_ulInvalidActionHandle, ::vr::k_ulInvalidActionHandle};
+::vr::ETrackingUniverseOrigin g_universe = ::vr::TrackingUniverseStanding;
+
+// Hand poses for GetHandPose ([hand][palm 1 / aim 0]).
+std::mutex g_poseMutex;
+float g_poses[2][2][3][4] = {};
+bool g_poseValid[2][2] = {};
 ::vr::VRActionHandle_t g_pad[kPadActionCount] = {};
 bool g_ready = false;
 
@@ -291,8 +301,9 @@ unsigned TriggerByte(float pull)
 
 } // namespace
 
-void Init(::vr::IVRInput* input, ::vr::IVRSystem* system)
+void Init(::vr::IVRInput* input, ::vr::IVRSystem* system, int trackingUniverse)
 {
+    g_universe = static_cast<::vr::ETrackingUniverseOrigin>(trackingUniverse);
     if (!input || g_input)
         return;
     g_input = input;
@@ -324,6 +335,10 @@ void Init(::vr::IVRInput* input, ::vr::IVRSystem* system)
     g_turn = Handle("/actions/main/in/Turn");
     g_trigger[0] = Handle("/actions/main/in/TriggerLeft");
     g_trigger[1] = Handle("/actions/main/in/TriggerRight");
+    g_palm[0] = Handle("/actions/main/in/LeftHandPalm");
+    g_palm[1] = Handle("/actions/main/in/RightHandPalm");
+    g_aim[0] = Handle("/actions/main/in/LeftHandAim");
+    g_aim[1] = Handle("/actions/main/in/RightHandAim");
     g_recenter = Handle("/actions/main/in/Recenter");
     for (int i = 0; i < kPadActionCount; ++i)
         g_pad[i] = Handle(PadActionName(kPadActions[i]).c_str());
@@ -347,6 +362,28 @@ void Update()
     }
     if (err != ::vr::VRInputError_None)
         return;
+
+    // Hand poses (grip and tip), predicted for the frame WaitGetPoses just started.
+    {
+        float poses[2][2][3][4] = {};
+        bool valid[2][2] = {};
+        for (int h = 0; h < 2; ++h)
+            for (int k = 0; k < 2; ++k)
+            {
+                const ::vr::VRActionHandle_t a = k ? g_palm[h] : g_aim[h];
+                ::vr::InputPoseActionData_t d{};
+                if (a == ::vr::k_ulInvalidActionHandle ||
+                    g_input->GetPoseActionDataForNextFrame(a, g_universe, &d, sizeof(d),
+                                                           ::vr::k_ulInvalidInputValueHandle) != ::vr::VRInputError_None ||
+                    !d.bActive || !d.pose.bPoseIsValid)
+                    continue;
+                std::memcpy(poses[h][k], d.pose.mDeviceToAbsoluteTracking.m, sizeof(poses[h][k]));
+                valid[h][k] = true;
+            }
+        std::lock_guard<std::mutex> lock(g_poseMutex);
+        std::memcpy(g_poses, poses, sizeof(g_poses));
+        std::memcpy(g_poseValid, valid, sizeof(g_poseValid));
+    }
 
     float mx, my, tx, ty;
     Analog2(g_move, &mx, &my);
@@ -414,6 +451,17 @@ void Shutdown()
     g_ready = false;
     g_havePad.store(false, std::memory_order_release);
     AVP_LOG(kLog, "SteamVR Input stopped");
+}
+
+bool GetHandPose(int hand, bool palm, float m[3][4])
+{
+    if (hand < 0 || hand > 1)
+        return false;
+    std::lock_guard<std::mutex> lock(g_poseMutex);
+    if (!g_poseValid[hand][palm ? 1 : 0])
+        return false;
+    std::memcpy(m, g_poses[hand][palm ? 1 : 0], sizeof(float) * 12);
+    return true;
 }
 
 bool GetPad(PadState* out)

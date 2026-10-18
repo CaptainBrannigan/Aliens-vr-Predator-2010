@@ -9,6 +9,7 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <mutex>
@@ -114,6 +115,8 @@ void MatMul(const float a[9], const float b[9], float c[9])
             c[r * 3 + k] = a[r * 3 + 0] * b[0 * 3 + k] + a[r * 3 + 1] * b[1 * 3 + k] + a[r * 3 + 2] * b[2 * 3 + k];
 }
 
+std::atomic<void*> g_localCharacter{nullptr};
+
 // ---- State: the look updates' thread writes, the eye cameras read the frame (mutex) ----
 bool g_active = false;
 void* g_ctrl = nullptr;
@@ -167,7 +170,10 @@ bool Steer(void* ctrl, void* character, const float* gameDir, float out[4])
         return false;
     }
     int owner = 0, player = 0;
-    if (!IsLocalPlayerController(ctrl, &owner, &player))
+    const bool local = IsLocalPlayerController(ctrl, &owner, &player);
+    if (local)
+        g_localCharacter.store(character, std::memory_order_relaxed);
+    if (!local)
     {
         static void* lastOther = nullptr;
         if (ctrl != lastOther)
@@ -341,6 +347,8 @@ void Register()
 {
     RegisterShadowReplacement(addr::LookCtrl_SetLookDirection, reinterpret_cast<void*>(&SetLookDirectionReplacement));
 }
+
+void* LocalCharacter() { return g_localCharacter.load(std::memory_order_relaxed); }
 
 bool PlayerFrame(float m[9], float look[9])
 {

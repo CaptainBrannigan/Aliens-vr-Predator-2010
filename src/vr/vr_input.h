@@ -20,7 +20,7 @@ class IVRSystem;
 namespace avp::input {
 
 // Once, after the SteamVR connection is up (main thread).
-void Init(::vr::IVRInput* input, ::vr::IVRSystem* system);
+void Init(::vr::IVRInput* input, ::vr::IVRSystem* system, int trackingUniverse);
 
 // Main thread, once per frame, right after WaitGetPoses.
 void Update();
@@ -36,5 +36,10 @@ struct PadState
     float moveX, moveY, turnX, turnY; // -1..1, +Y = pushed forward
 };
 bool GetPad(PadState* out);
+
+// A hand's pose from this frame's update (the same prediction as WaitGetPoses), OpenVR tracking space: 3x4 row-major
+// (columns = the controller's x / y / z axes, column 3 = position, metres). palm = the grip pose ("RightHandPalm" /
+// "LeftHandPalm" actions), else the aim (tip) pose. hand 0 = left, 1 = right. Any thread (copied under a lock).
+bool GetHandPose(int hand, bool palm, float m[3][4]);
 
 } // namespace avp::input

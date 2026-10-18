@@ -15,6 +15,7 @@ void Load();
 float IpdScale();      // eye separation, x the headset's IPD
 bool GameCameraBase(); // eye cameras = the game's camera + the head's difference (keeps shake, recoil)
 bool RollFromHeadOnly(); // the game camera's own roll is dropped, the head's roll stays (render only), all species
+bool EyeFovBetweenFrames(); // view 0 between frames: the game camera's pose with the eyes' field of view (vs. its own)
 bool HudPanel();       // HUD squeezed into a panel (off = the game's full-view HUD, corners cut off)
 float HudWidthDeg();   // panel width (16:9)
 float HudDistance();   // metres: the eyes converge on the panel at this distance
@@ -28,9 +29,20 @@ float TurnSpeedDeg();        // head aim's smooth turn, right stick fully deflec
 float StickFullDeflection(); // VR stick deflection that counts as full (they rarely reach 1.0)
 float TurnSpeed();           // right stick scale for the game's own look (head aim off)
 
+bool GunOnRightController(); // test: the first-person weapon model follows the right controller (hooks/first_person.h)
+// Its placement from the controller: off = right, up, forward (metres); angles = pitch (+ up), yaw (+ right), roll
+// (degrees, the engine's conventions in the controller's frame).
+void GunOffset(float off[3], float angles[3]);
+bool ArmsFollowControllers();  // Marine: each arm + hand follows its controller (hooks/first_person.h)
+void BodyOffset(float* forward, float* up); // the first-person body model moved from the view, metres (render only)
+float TorsoTurnDeg();   // the body's upper body turned from the stomach about the vertical, + right (render only)
+float ElbowSwivelDeg(); // the arm IK's elbows turned about the shoulder-wrist line, + from out toward down
+void HandOffset(int hand, float off[3], float angles[3]); // hand 0 = left, 1 = right; as GunOffset (settings in cm)
+int HideBodyBonesFirst();     // bone hide on the first-person body: bones # first..last (1-based), 0 = off
+int HideBodyBonesLast();
+bool DebugMeshProbe(); // log the first-person body pass's draws (hooks/first_person.h)
 int DebugHidePass();   // index into kHudPasses (hooks/hud_passes.h) whose draws are skipped, kHidePassUnlisted, -1 = none
 int DebugHideDraw();   // only that pass's Nth draw (per eye render), 0 = all of them
-
 
 // ---- Dashboard menu ----
 struct MenuInfo

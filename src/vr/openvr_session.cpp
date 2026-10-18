@@ -108,7 +108,7 @@ void Connect()
     dashboard::Start(g_overlay);
     auto* vrInput = static_cast<::vr::IVRInput*>(get(::vr::IVRInput_Version, &err));
     if (vrInput)
-        input::Init(vrInput, g_system);
+        input::Init(vrInput, g_system, static_cast<int>(g_universe));
     else
         AVP_LOG(kLog, "IVRInput missing (err %d) -- no controllers", err);
 }

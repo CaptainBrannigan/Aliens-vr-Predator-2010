@@ -40,11 +40,16 @@ Head aim for all species through the look controller's SetLookDirection (`src/vr
 **Head look: COMPLETE (v0.1)**, including multiplayer (local player only; replication of the head-driven look not yet
 verified with a second player). Known issue: the multiplayer pause menu isn't detected as a pause (logged).
 
+**Marine arms on the controllers (v0.15, render only):** the first-person body's bone buffer is rewritten before its
+draw (`src/hooks/first_person.*`): hands on the controllers, two-bone arm IK (joints from a vertex read-back), body
+offset, torso turn, elbow swivel, bone hide; the weapon model on the right controller as a test option (goal 5's arm
+IK, Marine only).
+
 ## Next
 
-1. **Motion controls** (goal 4): how the first-person meshes (arms, hands, weapon) are separated and drawn, and what
-   control there is over their bones -- then weapon and hands on the controllers, controller aim through the look
-   controller's aim-point raycast (character vtable `+0xBC`) with the view staying on the head, melee gestures.
+1. **Controller aim** (goal 4): shots from the weapon / controller while the look stays on the head -- find where a
+   shot takes its direction (the look controller's aim point, character vtable `+0xBC`, or the weapon's own fire
+   code), then holsters (the weapon in whichever hand grips it), the game's arm animation off, melee gestures.
 2. Multiplayer pause menu on the flat screen (from the logged menu state).
 3. **6DoF head position** (goal 3), port `reference/mohw_port/hooks/head_position.*`.
 4. Predator vision / zoom, IK (goals 2, 5).

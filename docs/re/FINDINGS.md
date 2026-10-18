@@ -239,6 +239,79 @@ That's what the live test answers.
 - `Entity_CreateVisionAndWeaponComps` (`007062C0`): creates the VisionMode and Weapon components.
 - The weapon/hands render path and whether the viewmodel uses its own FOV are still unknown — needs live work.
 
+**Static pass (2026-10-17, start of the motion-controls work):**
+- A character has **up to three skinned mesh parts** at `character+0x1C0..+0x1C8`, picked from a model-name list by
+  mode: first person (`+0xE8` bit 2) list `00920034`, third person `00920028` (bit 3) or `0092001C`; each name is
+  resolved by `FUN_004F2420`.
+- They share **one skin object** at `character+0x98` (0x1A0 bytes, built from the model at `+0xB0` by `FUN_004D8430`);
+  its `+0x3C` is compared against every part's `+0x04` -- most likely the shared **skeleton**. Parts are set per slot
+  by `FUN_004D7F40(part, slot)`.
+- `FUN_006F52C0(skin, character+0xAC)` binds the skin to the character's **animation/pose** (`+0xAC`); then the
+  `FirstPerson.SkinAttachment` / `ThirdPerson.SkinAttachment` event goes out (`FUN_004F2F40`) -- presumably what the
+  weapon attaches to (a bone of that skeleton), i.e. the weapon is its own model.
+- **Skinning is on the GPU**: the skinned shaders take `g_axBoneMatrices` (a bone-matrix array in a constant buffer).
+  Bone control can therefore sit at the CPU pose / matrix palette before upload (data writes, CEG-safe) or at the
+  uploaded constant buffer per draw (the MOHW route).
+- No bone names in the exe (data-driven, like the animation names). Dismemberment part names (`arm_left`,
+  `Upper Right Arm`, ...) at `009D2240..`.
+**Live (2026-10-17, user + `src/hooks/mesh_probe.cpp`):**
+- The mesh-queue pass (`0053AB20`, return `00808E14`) draws the player's whole body and gun. All its skinned draws
+  use one vertex shader and one bone buffer, **VS constant buffer slot 5, 6288 bytes, dynamic**.
+- **The first-person body is one model** (one index / vertex buffer pair, 15 submeshes sharing one palette fill):
+  user-found draw #7 = arms (1525 indices), #8 = hands (4461 indices). **The weapon is its own model** with its own
+  palette fill (the pistol: draws #22-31, one index buffer). Draw numbers shift with state sorting; the buffers and
+  index counts identify the parts.
+- **Bone upload** (`FUN_00677E60`, the skinned-mesh draw): `Map(cb5, WRITE_DISCARD)` (returns to `00677F83`), then
+  `FUN_00676D70` writes the header and `FUN_00675F30` the bones, `Unmap`, `VSSetConstantBuffers(5, 1, cb5)`, draws.
+  Layout: `+0x00` the model's world matrix (4x4 row-major, translation in row 3), `+0x40` world * view * projection,
+  `+0x80` float4 (near, 1/(far - near), 0, 0 on one path), **`+0x90` 128 bones**, each the source's row-major 4x4
+  stored transposed as 3 float4 (columns 0-2 as rows, translation in w); (6288 - 144) / 48 = 128 exactly.
+- Each bone's slot [row 2].z is overwritten with `1 - FUN_004D3390(bone)`: `FUN_004D3390` = thiscall(obj, i) returning
+  `obj+0x15C[i]` (count `obj+0x160`) -- a **per-bone factor** in what is likely the skin object (0x1A0 bytes, so
+  +0x15C fits), presumably the dismemberment hide; the shader rebuilds that rotation component.
+- So there are two control points: per draw, rewrite the mapped bone buffer for the first-person body / weapon (render
+  only: whole-model moves via the header's world and WVP matrices, per-bone moves via the bones); or the per-bone
+  factor in heap memory (hide bones). The CPU source of the bone matrices is `FUN_00675F30`'s second argument.
+- **Marine first-person bones** (user-found with the mod's bone hide, 1-based): left arm to the wrist 6-9, left hand
+  10-25, right arm to the wrist 28-31, right hand 32-47. The weapon model follows the right controller when its
+  world (and WVP = W' * W^-1 * WVP) is rewritten (verified 2026-10-17).
+- **Marine bone map** (0-based, from the vertex read-back; model y is down, x- = left; parts 7 = arms, 8 = hands):
+  5 head / neck (x0, highest), 6 left clavicle (torso parts only), 7 upper arm, 8 forearm, 9 hand, 10-24 fingers,
+  25 forearm twist (parts 7 8), 26 upper arm twist, 27 left shoulder (torso parts 11 13 only); right 28-49 mirror
+  it (28 clavicle ... 47 forearm twist, 48 upper arm twist, 49 shoulder). Torso / legs by centroid height (model y,
+  feet ~0, head ~-1.65): 1 pelvis (-1.12), 2 stomach (-1.24), 3 spine (-1.33), 4 chest (-1.54), 50 top (-1.72),
+  51 / 52 front pouches at belly height, 53-56 left leg (thigh, calf, foot, toe), 57-60 right leg, 61 belt front.
+  The idle animation holds the left shoulder well forward; the mod's torso turn (from the stomach; a separate chest
+  turn was tried and dropped as unneeded) turns bones 2-52 (not the hands) about the vertical before the arm IK, and
+  an elbow swivel turns the IK's elbow about the shoulder-wrist line (+ from the arm's outward side toward down; the
+  forearm-continuation hint alone leaves the elbows a little high and out). The twist bones sit
+  outside the 1-based hide ranges above: an arm move that leaves them out stretches the wrist and upper arm.
+- **Marine body vertex** (stride 64, read back 2026-10-17): +0 position float3, +12 blend indices as 4 bytes (live:
+  `57 1 0 0` with weights 0.94 / 0.06; +16 repeats the first bytes, purpose unknown), +20 blend weights as 4 x SHORT4N (`FF 7F 00 00 00 00 00 00` = 1, 0, 0, 0), +28 / +36 / +44 normal, tangent,
+  binormal as half4, +52 two half2 UVs, +60 a float (1.0). Weight detection that only tried bytes missed it, so the
+  first arm build never had hand centres.
+- `src/hooks/first_person.cpp`: the bone buffer is re-uploaded before a first-person model's first draw (Map
+  WRITE_DISCARD) with: bones collapsed (hide); each hand moved rigidly so its centre (the hand bones' bind-space
+  centroids from a vertex read-back, under their current matrices) sits on its controller, turned by camera ->
+  controller; then two-bone IK on the upper arm and forearm. Joints come from the same read-back: the centre of the
+  vertices skinned across a joint's two segments (shoulder = torso / upper arm, elbow = upper arm / forearm, wrist =
+  forearm / hand), taken through the game's current matrices each frame, so the segment lengths are the game's. The
+  shoulder stays (follows the hand only past full reach), the elbow sits on the reach circle on the side where the
+  forearm would continue straight back from the hand, the hinge frame (segment axis + bend normal) gives each
+  segment's rotation, and the forearm twist bone takes half of the hand's roll about the forearm. Measured
+  2026-10-17: the Marine's joints sit at shoulder / elbow / wrist x = 0.18 / 0.42 / 0.62 (bind), upper arm 0.26-0.28,
+  forearm 0.23-0.24 (shoulder to wrist ~0.50, shorter than a player's reach). Stretching the segments (tried as an
+  arm-length setting, removed) pulls the mesh out of line with the hands; the body offset (setting) instead moves the
+  whole body model's world and WVP along its own level forward / up, bringing the shoulders under the head. **The
+  body model's frame** (after the bones, before the world matrix): y = down, z = sideways (an offset along z moved
+  the body sideways), x = forward or back (the mod settles the sign against the view direction). It **does not pitch
+  with the view** (stayed level while the view went 0 to -60 deg); any look up / down posing would be in the bones
+  (unchecked). The weapon's world
+  matrix is carried from the camera's frame to the controller's. Bone layout per slot: the source's row-major 4x4 S
+  stored as columns 0-2, S[2][2] rebuilt as (row0 x row1).z since its slot holds the per-bone factor.
+- The character object the look controller passes to SetLookDirection is NOT the one holding the skin attachment
+  fields (`+0x98` etc. read as floats there).
+
 ---
 
 ## 10. Steam CEG integrity checks (2026-10-16, live-confirmed)

@@ -3,7 +3,6 @@
 #include "log.h"
 #include "../hooks/hud_passes.h"
 
-
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -38,11 +37,9 @@ struct Entry
     const char* (*choiceLabel)(int); // Choice only
 };
 
-
 // "Debug: hide pass" choices: 0 = off, i = kHudPasses[i - 1].
 // "Debug: hide pass" choices: 0 = off, i = kHudPasses[i - 1], kHudPassCount + 1 = unlisted draws.
 const char* HidePassLabel(int i) { return i <= 0 ? "off" : HudPassLabel(i - 1); }
-
 
 // Order = display order; entries of a group must be contiguous.
 const Entry kEntries[] = {
@@ -50,6 +47,8 @@ const Entry kEntries[] = {
     {"GameCameraBase", "View", "Keep the game camera's motion (shake, recoil)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
      nullptr},
     {"RollFromHeadOnly", "View", "Camera roll from your head only", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
+    {"EyeFovBetweenFrames", "View", "Wide culling between frames (less pop-in)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
+     nullptr},
     {"HudPanel", "HUD", "HUD in a panel (off = full view)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"HudWidthDeg", "HUD", "HUD size (width)", Kind::Number, 60.0f, 20.0f, 110.0f, 1.0f, 0, "deg", nullptr},
     {"HudDistance", "HUD", "HUD distance", Kind::Number, 2.5f, 0.5f, 20.0f, 0.1f, 1, "m", nullptr},
@@ -70,12 +69,47 @@ const Entry kEntries[] = {
     {"PredatorAimUp", "Aim offsets", "Predator aim up", Kind::Number, 0.0f, -15.0f, 15.0f, 0.25f, 2, "deg", nullptr},
     {"PredatorAimRight", "Aim offsets", "Predator aim right", Kind::Number, 0.0f, -15.0f, 15.0f, 0.25f, 2, "deg",
      nullptr},
-
+    {"ArmsFollowControllers", "Hands", "Arms follow the controllers (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
+     nullptr},
+    {"BodyForward", "Hands", "Body (shoulders) forward", Kind::Number, 0.05f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
+    {"BodyUp", "Hands", "Body (shoulders) up", Kind::Number, -0.06f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
+    {"StomachTurn", "Hands", "Torso turn from the stomach (+ right)", Kind::Number, -10.0f, -90.0f, 90.0f, 1.0f, 0,
+     "deg", nullptr},
+    {"ElbowSwivel", "Hands", "Elbow swivel (+ lowers the elbows)", Kind::Number, 30.0f, -90.0f, 90.0f, 1.0f, 0, "deg",
+     nullptr},
+    {"GunOnRightController", "Weapon", "Test: gun on the right controller", Kind::Toggle, 0.0f, 0, 0, 0, 0, "", nullptr},
+    {"GunOffsetRight", "Weapon", "Gun offset right", Kind::Number, 0.0f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
+    {"GunOffsetUp", "Weapon", "Gun offset up", Kind::Number, 0.0f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
+    {"GunOffsetForward", "Weapon", "Gun offset forward", Kind::Number, 0.0f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
+    {"GunPitch", "Weapon", "Gun pitch (+ up)", Kind::Number, 0.0f, -180.0f, 180.0f, 1.0f, 0, "deg", nullptr},
+    {"GunYaw", "Weapon", "Gun yaw (+ right)", Kind::Number, 0.0f, -180.0f, 180.0f, 1.0f, 0, "deg", nullptr},
+    {"GunRoll", "Weapon", "Gun roll", Kind::Number, 0.0f, -180.0f, 180.0f, 1.0f, 0, "deg", nullptr},
+    {"LeftHandRight", "Left hand", "Left hand offset right", Kind::Number, 0.0f, -50.0f, 50.0f, 0.1f, 1, "cm", nullptr},
+    {"LeftHandUp", "Left hand", "Left hand offset up", Kind::Number, -1.0f, -50.0f, 50.0f, 0.1f, 1, "cm", nullptr},
+    {"LeftHandForward", "Left hand", "Left hand offset forward", Kind::Number, -1.0f, -50.0f, 50.0f, 0.1f, 1, "cm",
+     nullptr},
+    {"LeftHandPitch", "Left hand", "Left hand pitch (+ up)", Kind::Number, -46.0f, -180.0f, 180.0f, 1.0f, 0, "deg",
+     nullptr},
+    {"LeftHandYaw", "Left hand", "Left hand yaw (+ right)", Kind::Number, 0.0f, -180.0f, 180.0f, 1.0f, 0, "deg",
+     nullptr},
+    {"LeftHandRoll", "Left hand", "Left hand roll", Kind::Number, 0.0f, -180.0f, 180.0f, 1.0f, 0, "deg", nullptr},
+    {"RightHandRight", "Right hand", "Right hand offset right", Kind::Number, 0.0f, -50.0f, 50.0f, 0.1f, 1, "cm",
+     nullptr},
+    {"RightHandUp", "Right hand", "Right hand offset up", Kind::Number, -1.3f, -50.0f, 50.0f, 0.1f, 1, "cm", nullptr},
+    {"RightHandForward", "Right hand", "Right hand offset forward", Kind::Number, -1.5f, -50.0f, 50.0f, 0.1f, 1, "cm",
+     nullptr},
+    {"RightHandPitch", "Right hand", "Right hand pitch (+ up)", Kind::Number, -58.0f, -180.0f, 180.0f, 1.0f, 0, "deg",
+     nullptr},
+    {"RightHandYaw", "Right hand", "Right hand yaw (+ right)", Kind::Number, 0.0f, -180.0f, 180.0f, 1.0f, 0, "deg",
+     nullptr},
+    {"RightHandRoll", "Right hand", "Right hand roll", Kind::Number, 0.0f, -180.0f, 180.0f, 1.0f, 0, "deg", nullptr},
+    {"HideBodyBonesFirst", "Debug", "Hide body bones from #", Kind::Number, 0.0f, 0.0f, 128.0f, 1.0f, 0, "", nullptr},
+    {"HideBodyBonesLast", "Debug", "Hide body bones to #", Kind::Number, 0.0f, 0.0f, 128.0f, 1.0f, 0, "", nullptr},
+    {"DebugMeshProbe", "Debug", "Mesh probe (log the body pass's draws)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"DebugHidePass", "Debug", "Hide pass", Kind::Choice, 0.0f, 0.0f, static_cast<float>(kHudPassCount + 1), 1.0f, 0, "",
      &HidePassLabel},
     {"DebugHideDraw", "Debug", "Hide only draw # of it (0 = all)", Kind::Number, 0.0f, 0.0f, 999.0f, 1.0f, 0, "",
      nullptr},
-
 
 };
 constexpr int kCount = static_cast<int>(sizeof(kEntries) / sizeof(kEntries[0]));
@@ -85,6 +119,7 @@ enum Index
     kIpdScale,
     kGameCameraBase,
     kRollFromHeadOnly,
+    kEyeFovBetweenFrames,
     kHudPanel,
     kHudWidthDeg,
     kHudDistance,
@@ -101,7 +136,33 @@ enum Index
     kAlienAimRight,
     kPredatorAimUp,
     kPredatorAimRight,
-
+    kArmsFollowControllers,
+    kBodyForward,
+    kBodyUp,
+    kStomachTurn,
+    kElbowSwivel,
+    kGunOnRightController,
+    kGunOffsetRight,
+    kGunOffsetUp,
+    kGunOffsetForward,
+    kGunPitch,
+    kGunYaw,
+    kGunRoll,
+    kLeftHandRight,
+    kLeftHandUp,
+    kLeftHandForward,
+    kLeftHandPitch,
+    kLeftHandYaw,
+    kLeftHandRoll,
+    kRightHandRight,
+    kRightHandUp,
+    kRightHandForward,
+    kRightHandPitch,
+    kRightHandYaw,
+    kRightHandRoll,
+    kHideBodyBonesFirst,
+    kHideBodyBonesLast,
+    kDebugMeshProbe,
     kDebugHidePass,
     kDebugHideDraw,
 };
@@ -206,8 +267,8 @@ float HudWidthDeg() { return g_values[kHudWidthDeg].load(std::memory_order_relax
 float HudDistance() { return g_values[kHudDistance].load(std::memory_order_relaxed); }
 float HudHeightDeg() { return g_values[kHudHeightDeg].load(std::memory_order_relaxed); }
 
-
 bool GameCameraBase() { return g_values[kGameCameraBase].load(std::memory_order_relaxed) != 0.0f; }
+bool EyeFovBetweenFrames() { return g_values[kEyeFovBetweenFrames].load(std::memory_order_relaxed) != 0.0f; }
 bool RollFromHeadOnly() { return g_values[kRollFromHeadOnly].load(std::memory_order_relaxed) != 0.0f; }
 bool HideMarineReticle() { return g_values[kHideMarineReticle].load(std::memory_order_relaxed) != 0.0f; }
 
@@ -224,6 +285,34 @@ float TurnSpeedDeg() { return g_values[kTurnSpeedDeg].load(std::memory_order_rel
 float StickFullDeflection() { return g_values[kStickFullDeflection].load(std::memory_order_relaxed); }
 float TurnSpeed() { return g_values[kTurnSpeed].load(std::memory_order_relaxed); }
 
+bool GunOnRightController() { return g_values[kGunOnRightController].load(std::memory_order_relaxed) != 0.0f; }
+// Six consecutive values (right, up, forward, pitch, yaw, roll) from index first.
+void SixFrom(int first, float off[3], float angles[3])
+{
+    for (int i = 0; i < 3; ++i)
+    {
+        off[i] = g_values[first + i].load(std::memory_order_relaxed);
+        angles[i] = g_values[first + 3 + i].load(std::memory_order_relaxed);
+    }
+}
+void GunOffset(float off[3], float angles[3]) { SixFrom(kGunOffsetRight, off, angles); }
+void HandOffset(int hand, float off[3], float angles[3])
+{
+    SixFrom(hand ? kRightHandRight : kLeftHandRight, off, angles);
+    for (int i = 0; i < 3; ++i)
+        off[i] *= 0.01f; // the settings are centimetres
+}
+bool ArmsFollowControllers() { return g_values[kArmsFollowControllers].load(std::memory_order_relaxed) != 0.0f; }
+void BodyOffset(float* forward, float* up)
+{
+    *forward = g_values[kBodyForward].load(std::memory_order_relaxed);
+    *up = g_values[kBodyUp].load(std::memory_order_relaxed);
+}
+float TorsoTurnDeg() { return g_values[kStomachTurn].load(std::memory_order_relaxed); }
+float ElbowSwivelDeg() { return g_values[kElbowSwivel].load(std::memory_order_relaxed); }
+int HideBodyBonesFirst() { return static_cast<int>(g_values[kHideBodyBonesFirst].load(std::memory_order_relaxed)); }
+int HideBodyBonesLast() { return static_cast<int>(g_values[kHideBodyBonesLast].load(std::memory_order_relaxed)); }
+bool DebugMeshProbe() { return g_values[kDebugMeshProbe].load(std::memory_order_relaxed) != 0.0f; }
 int DebugHidePass() { return static_cast<int>(g_values[kDebugHidePass].load(std::memory_order_relaxed)) - 1; }
 bool HideDuplicateTracker() { return g_values[kHideDuplicateTracker].load(std::memory_order_relaxed) != 0.0f; }
 int DebugHideDraw() { return static_cast<int>(g_values[kDebugHideDraw].load(std::memory_order_relaxed)); }

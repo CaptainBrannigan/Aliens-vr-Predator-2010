@@ -20,15 +20,15 @@ namespace {
 
 constexpr const char* kLog = "avpvr_dashboard.log";
 
-constexpr int kWidth = 1800;
-constexpr int kHeight = 900;
+constexpr int kWidth = 2400;
+constexpr int kHeight = 1080;
 constexpr int kThumbSize = 256;
 
 // Layout.
 constexpr int kTitleHeight = 80;
-constexpr int kColumnCount = 2;
-constexpr int kColumnX[kColumnCount] = {30, 915};
-constexpr int kColumnWidth = 855;
+constexpr int kColumnCount = 3;
+constexpr int kColumnX[kColumnCount] = {30, 820, 1610};
+constexpr int kColumnWidth = 760;
 constexpr int kHeaderHeight = 44;
 constexpr int kRowHeight = 36;
 constexpr int kButtonWidth = 54;
@@ -56,7 +56,13 @@ int g_hover = -1;
 
 int ColumnForGroup(const char* group)
 {
-    return strcmp(group, "Controls") == 0 || strcmp(group, "Aim offsets") == 0 || strcmp(group, "Debug") == 0 ? 1 : 0;
+    // Column 0: View, HUD; column 1: Controls, Aim offsets, Hands, Debug; column 2: Weapon, Left / Right hand.
+    if (strcmp(group, "Controls") == 0 || strcmp(group, "Aim offsets") == 0 || strcmp(group, "Hands") == 0 ||
+        strcmp(group, "Debug") == 0)
+        return 1;
+    if (strcmp(group, "Weapon") == 0 || strcmp(group, "Left hand") == 0 || strcmp(group, "Right hand") == 0)
+        return 2;
+    return 0;
 }
 
 class Canvas
@@ -170,9 +176,9 @@ void DrawMenu(Canvas& c)
     RECT recenter{kWidth - 30 - 220, 18, kWidth - 30, kTitleHeight - 14};
     DrawButton(c, recenter, "Recenter view", rowFont, kButton, kRecenterButton, 0);
 
-    int y[kColumnCount] = {kTitleHeight, kTitleHeight};
-    const char* lastGroup[kColumnCount] = {nullptr, nullptr};
-    int parity[kColumnCount] = {0, 0};
+    int y[kColumnCount] = {kTitleHeight, kTitleHeight, kTitleHeight};
+    const char* lastGroup[kColumnCount] = {nullptr, nullptr, nullptr};
+    int parity[kColumnCount] = {0, 0, 0};
     for (int i = 0, n = settings::MenuCount(); i < n; ++i)
     {
         settings::MenuInfo info{};
@@ -341,7 +347,7 @@ void Start(::vr::IVROverlay* overlay)
         if (err == ::vr::VROverlayError_None)
         {
             const ::vr::HmdVector2_t scale{static_cast<float>(kWidth), static_cast<float>(kHeight)};
-            overlay->SetOverlayWidthInMeters(g_main, 2.5f);
+            overlay->SetOverlayWidthInMeters(g_main, 3.0f);
             overlay->SetOverlayInputMethod(g_main, ::vr::VROverlayInputMethod_Mouse);
             overlay->SetOverlayMouseScale(g_main, &scale);
         }
