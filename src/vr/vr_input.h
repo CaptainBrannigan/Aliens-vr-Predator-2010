@@ -37,6 +37,11 @@ struct PadState
 };
 bool GetPad(PadState* out);
 
+// Movement assist (vr/stereo.cpp's head follow): a left-stick deflection (-1..1, +Y forward) the pad uses while the
+// player's own move stick is centred. Any thread.
+void SetMoveAssist(float x, float y);
+void GetMoveAssist(float* x, float* y);
+
 // A hand's pose from this frame's update (the same prediction as WaitGetPoses), OpenVR tracking space: 3x4 row-major
 // (columns = the controller's x / y / z axes, column 3 = position, metres). palm = the grip pose ("RightHandPalm" /
 // "LeftHandPalm" actions), else the aim (tip) pose. hand 0 = left, 1 = right. Any thread (copied under a lock).

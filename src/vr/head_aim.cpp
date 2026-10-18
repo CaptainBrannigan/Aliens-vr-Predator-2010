@@ -262,12 +262,10 @@ bool Steer(void* ctrl, void* character, const float* gameDir, float out[4])
     const float frame[9] = {right.x, up.x, g_heading.x, right.y, up.y, g_heading.y, right.z, up.z, g_heading.z};
     float view[9];
     MatMul(frame, head, view);
-    // Per-class aim offset (settings AimOffset*): the look turned up / right relative to the view, in the view's own
+    // Head look offset (the class's setting): the look turned up / right relative to the view, in the view's own
     // frame, for species whose shots land off the view's centre (2026-10-17: the Marine's aim sat slightly above).
-    int species = -1;
-    SafeReadFloats(addr::g_PlayerSpecies, reinterpret_cast<float*>(&species), 1);
     float offUp = 0.0f, offRight = 0.0f;
-    settings::AimOffsetDeg(species, &offUp, &offRight);
+    settings::LookOffsetDeg(&offUp, &offRight);
     if (offUp != 0.0f || offRight != 0.0f)
     {
         const float angles[3] = {offUp / kDeg, offRight / kDeg, 0.0f}; // engine angles: + pitch = up, + yaw = right

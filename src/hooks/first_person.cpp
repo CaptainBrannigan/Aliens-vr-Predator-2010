@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace avp::fp {
@@ -142,20 +143,37 @@ float g_boneCentroid[kMaxBones][3] = {};
 float g_boneWeight[kMaxBones] = {};
 bool g_haveCentroids = false;
 bool g_armLogged[2] = {}; // the arm move's first result per hand, logged once per bone map
+bool g_twoHanded = false; // two-handed aim engaged (UpdateTwoHanded, once per frame)
 // The game's own hand centres (world, before the mod's rewrite) from the latest body draw: a weapon is held there.
 float g_gameHand[2][3] = {};
 DWORD g_gameHandTick = 0;
 
-// The Marine body's arms (bone map 2026-10-17, 0-based; FINDINGS section 9): upper arm + its twist bone, forearm + its
-// twist bone (at the wrist), hand + fingers. Everything else (clavicle, shoulder, torso) stays where the game puts it.
+// A body's arms (0-based bones; FINDINGS section 9): the upper arm + its twist bone, the forearm, the bones riding the
+// forearm at the wrist (the Marine's twist bone, the Predator's gauntlet and blades: they take part of the hand's
+// roll), the hand + fingers, and the chest (the elbow swivel's reference). Everything else (clavicle, shoulder, torso)
+// stays where the game puts it. -1 = none.
 struct ArmRig
 {
-    int upper, upperTwist, fore, foreTwist, handFirst, handLast;
+    int upper, upperTwist, fore;
+    int wrist[4];
+    int handFirst, handLast;
+    int chest;
 };
-constexpr ArmRig kMarineArms[2] = {{7, 26, 8, 25, 9, 24}, {29, 48, 30, 47, 31, 46}};
+// Marine (bone map 2026-10-17, user-found arms / hands with the bone hide).
+constexpr ArmRig kMarineArms[2] = {{7, 26, 8, {25, -1, -1, -1}, 9, 24, 4}, {29, 48, 30, {47, -1, -1, -1}, 31, 46, 4}};
+// Predator (bone map 2026-10-17; the user's parts: biceps 7, forearms 13 = the gauntlets, hands 15, nails 16): upper
+// arm 7 / 31, forearm 8 / 32, hand 9 / 33 + fingers (5 x 3) 10-24 / 34-48, gauntlet 25-26 / 49, wrist blades
+// 27, 29 / 50, 52 (part 14); clavicles 6 / 30 and the torso stay.
+constexpr ArmRig kPredatorArms[2] = {{7, -1, 8, {25, 26, 27, 29}, 9, 24, 4}, {31, -1, 32, {49, 50, 52, -1}, 33, 48, 4}};
+// The arms of the species playing (g_PlayerSpecies: 0 Predator, 1 Alien, 2 Marine); nullptr = no rig (the Alien).
+const ArmRig* ArmsFor(int species)
+{
+    return species == 2 ? kMarineArms : species == 0 ? kPredatorArms : nullptr;
+}
+const ArmRig* PlayerArms() { return ArmsFor(Global<int>(addr::g_PlayerSpecies)); }
 // The Marine's upper body: above the pelvis (1) the stomach 2, spine 3, chest 4, head 5, clavicles / arms / shoulders
 // 6-49, top 50, front pouches 51-52 (belly height); the legs 53-60 and the belt 61 stay with the pelvis.
-constexpr int kMarineStomach = 2, kMarineChest = 4, kMarineUpperLast = 52;
+constexpr int kMarineStomach = 2, kMarineUpperLast = 52;
 enum ArmSegment
 {
     kSegOther,
@@ -165,10 +183,15 @@ enum ArmSegment
 };
 int SegmentOf(const ArmRig& r, int bone)
 {
+    if (bone < 0)
+        return kSegOther;
     if (bone == r.upper || bone == r.upperTwist)
         return kSegUpper;
-    if (bone == r.fore || bone == r.foreTwist)
+    if (bone == r.fore)
         return kSegFore;
+    for (int w : r.wrist)
+        if (bone == w)
+            return kSegFore;
     if (bone >= r.handFirst && bone <= r.handLast)
         return kSegHand;
     return kSegOther;
@@ -416,6 +439,10 @@ constexpr float kForeTwistShare = 0.5f;
 // back from the hand (the game's wrist angle), on the circle the two lengths allow. Past full reach the arm is straight
 // and the shoulder follows the hand. The forearm twist bone takes part of the hand's roll. Without joints from the
 // bone map the whole arm moves rigidly with the hand.
+bool TwoHandAimDelta(float d[16]); // below, with the two-handed aim
+float g_rightHandMove[16];         // two-handed: the weapon hand's world move this body draw (the off hand's too)
+bool g_haveRightHandMove = false;
+
 bool ArmToController(float* buffer, int hand, const ArmRig& r)
 {
     if (!g_haveCentroids)
@@ -457,6 +484,23 @@ bool ArmToController(float* buffer, int hand, const ArmRig& r)
     for (int k = 0; k < 3; ++k)
         t[12 + k] = ctrlPos[k] - (pw[0] * t[0 * 4 + k] + pw[1] * t[1 * 4 + k] + pw[2] * t[2 * 4 + k]);
     t[15] = 1.0f;
+    // Two-handed (the Marine's gun aimed by both hands): the weapon hand (right) stays on its controller, turned with
+    // the gun by the two-handed aim (about the gun's origin), so it keeps holding it; the off hand takes the same move,
+    // so it keeps exactly the game's own offset from the weapon hand (its grip on the gun, also through reloads), and
+    // its arm's IK reaches it there. (The right hand is placed first: StartModel.)
+    if (g_twoHanded && hand == 1)
+    {
+        float d[16], td[16];
+        if (TwoHandAimDelta(d))
+        {
+            Mul4(t, d, td);
+            std::memcpy(t, td, sizeof(t));
+        }
+        std::memcpy(g_rightHandMove, t, sizeof(t));
+        g_haveRightHandMove = true;
+    }
+    else if (g_twoHanded && hand == 0 && g_haveRightHandMove)
+        std::memcpy(t, g_rightHandMove, sizeof(t));
     float wt4[16], tm[16];
     Mul4(w, t, wt4);
     Mul4(wt4, winv, tm);
@@ -473,8 +517,9 @@ bool ArmToController(float* buffer, int hand, const ArmRig& r)
                 std::sqrt(dx * dx + dy * dy + dz * dz), ctrlPos[0], ctrlPos[1], ctrlPos[2]);
     }
     auto rigid = [&](const char* why) {
-        for (int b : {r.upper, r.upperTwist, r.fore, r.foreTwist})
-            MoveBone(buffer, b, tm);
+        for (int b : {r.upper, r.upperTwist, r.fore, r.wrist[0], r.wrist[1], r.wrist[2], r.wrist[3]})
+            if (b >= 0)
+                MoveBone(buffer, b, tm);
         if (firstLog)
             AVP_LOG(kLog, "arms: %s arm moved rigidly (%s)", hand ? "right" : "left", why);
         return true;
@@ -538,7 +583,7 @@ bool ArmToController(float* buffer, int hand, const ArmRig& r)
     if (const float swivel = settings::ElbowSwivelDeg())
     {
         float chest[16], outP[3], downP[3], cr[3];
-        ReadBone(BoneSlot(buffer, kMarineChest), chest, &factor);
+        ReadBone(BoneSlot(buffer, r.chest), chest, &factor);
         const float sign = hand ? 1.0f : -1.0f; // bind x: left arm -, right arm +
         const float out[3] = {sign * chest[0], sign * chest[1], sign * chest[2]};
         if (PerpTo(n, out, outP) && PerpTo(n, down, downP))
@@ -578,10 +623,12 @@ bool ArmToController(float* buffer, int hand, const ArmRig& r)
     PivotMove(ru, shoulder, shoulder2, mu);
     PivotMove(rf, elbow, elbow2, mf);
     MoveBone(buffer, r.upper, mu);
-    MoveBone(buffer, r.upperTwist, mu);
+    if (r.upperTwist >= 0)
+        MoveBone(buffer, r.upperTwist, mu);
     MoveBone(buffer, r.fore, mf);
 
-    // Forearm twist: the hand's roll about the new forearm (measured on the forearm's bend normal), shared.
+    // The bones riding the forearm at the wrist (twist bone, gauntlet, blades): the hand's roll about the new forearm
+    // (measured on the forearm's bend normal), shared.
     float zfHand[3], proj[3], cr[3];
     VecTimes(zf, handRot, zfHand);
     float roll = 0.0f;
@@ -593,10 +640,14 @@ bool ArmToController(float* buffer, int hand, const ArmRig& r)
         AxisRotation(fx2, roll * kForeTwistShare, rt);
         PivotMove(rt, elbow2, elbow2, tw);
         Mul4(mf, tw, mt);
-        MoveBone(buffer, r.foreTwist, mt);
+        for (int b : r.wrist)
+            if (b >= 0)
+                MoveBone(buffer, b, mt);
     }
     else
-        MoveBone(buffer, r.foreTwist, mf);
+        for (int b : r.wrist)
+            if (b >= 0)
+                MoveBone(buffer, b, mf);
     if (firstLog)
     {
         // Where the model's shoulder sits from the view, along the body's forward / up and sideways, for the body
@@ -622,7 +673,6 @@ bool ArmToController(float* buffer, int hand, const ArmRig& r)
 // still rolls the gun. The off-hand grip offset moves the aim point in the gun's frame (a hand below the bore doesn't
 // tilt the gun). Releasing the grip lets go. Decided once per frame (OnPresent); the gun placement, and with it the
 // drawn gun, the shots and the laser, follow it.
-bool g_twoHanded = false;
 
 bool LeftPalmWorld(float pos[3])
 {
@@ -716,6 +766,23 @@ void AimAtLeftPalm(float rot[9], const float pos[3])
     std::memcpy(rot, aimed, sizeof(aimed));
 }
 
+// Two-handed: the world turn the aim gives the gun (one-handed frame -> aimed frame, row vectors R1 * R2^T) about its
+// origin, for the hands.
+bool TwoHandAimDelta(float d[16])
+{
+    float off[3], angles[3], r1[9], r2[9], rd[9], pos[3];
+    settings::GunOffset(off, angles);
+    if (!ControllerWorld(1, off, angles, r1, pos))
+        return false;
+    std::memcpy(r2, r1, sizeof(r2));
+    AimAtLeftPalm(r2, pos);
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            rd[i * 3 + j] = r1[i * 3 + 0] * r2[j * 3 + 0] + r1[i * 3 + 1] * r2[j * 3 + 1] + r1[i * 3 + 2] * r2[j * 3 + 2];
+    PivotMove(rd, pos, pos, d);
+    return true;
+}
+
 // The weapon's world matrix w moved onto the right controller: its axes and pose relative to the game camera carried
 // over to the controller's frame, its origin at the controller + the offsets (controller frame: right, up, forward).
 // Two-handed, the frame aims at the left palm.
@@ -746,9 +813,100 @@ bool PlacedGunWorld(const float w[16], float nw[16])
     return true;
 }
 
-// The game's weapon model's latest world matrix (any frame it was drawn first person), for GunPlacement.
+// The game's gun model's latest world matrix (the main held model, chosen at Present), for GunPlacement.
 float g_gunWorld[16] = {};
 DWORD g_gunWorldTick = 0;
+
+// ---- The held weapon (2026-10-17) ----
+// The models held this frame (first render only). The one with the most parts is the gun: the pulse rifle's ammo
+// counter, for one, is a separate 1-part model held with it (it set the shot origin on some frames before). The gun's
+// mesh -- its part count and its first two parts' index counts -- names the weapon across levels (vertex buffers are
+// per level): live 2026-10-17, the pistol m10_2305_197, the pulse rifle m8_2693_284. A change that holds for
+// kWeaponSwitchFrames frames switches the per-weapon settings (settings::SetCurrentWeapon).
+struct HeldModel
+{
+    ID3D11Buffer* vb;
+    unsigned parts;
+    unsigned idx[2];
+    float world[16];
+};
+HeldModel g_held[4];
+int g_heldCount = 0;
+int g_heldCurrent = -1; // the model being drawn, if held
+constexpr unsigned kMinGunParts = 3;
+constexpr int kWeaponSwitchFrames = 15;
+struct KnownWeapon
+{
+    const char* key;
+    const char* name;
+};
+constexpr KnownWeapon kKnownWeapons[] = {{"m10_2305_197", "Pistol"}, {"m8_2693_284", "Pulse rifle"}};
+std::string g_weaponKey, g_candidateKey;
+int g_candidateFrames = 0;
+
+void NoteHeldModel(ID3D11Buffer* vb, const float* world)
+{
+    for (int i = 0; i < g_heldCount; ++i)
+        if (g_held[i].vb == vb)
+        {
+            g_heldCurrent = i;
+            return;
+        }
+    if (g_heldCount >= 4)
+        return;
+    HeldModel& h = g_held[g_heldCount];
+    h.vb = vb;
+    h.parts = 0;
+    h.idx[0] = h.idx[1] = 0;
+    std::memcpy(h.world, world, sizeof(h.world));
+    g_heldCurrent = g_heldCount++;
+}
+
+void NoteHeldPart(unsigned indexCount)
+{
+    if (g_heldCurrent < 0)
+        return;
+    HeldModel& h = g_held[g_heldCurrent];
+    if (h.parts < 2)
+        h.idx[h.parts] = indexCount;
+    ++h.parts;
+}
+
+// At Present: the gun of this frame -> GunPlacement's world, and the weapon's identity.
+void ChooseGun()
+{
+    int best = -1;
+    for (int i = 0; i < g_heldCount; ++i)
+        if (g_held[i].parts >= kMinGunParts && (best < 0 || g_held[i].parts > g_held[best].parts))
+            best = i;
+    if (best >= 0)
+    {
+        const HeldModel& h = g_held[best];
+        std::memcpy(g_gunWorld, h.world, sizeof(g_gunWorld));
+        g_gunWorldTick = GetTickCount();
+        char key[48];
+        _snprintf_s(key, sizeof(key), _TRUNCATE, "m%u_%u_%u", h.parts, h.idx[0], h.idx[1]);
+        if (g_weaponKey == key)
+            g_candidateFrames = 0;
+        else
+        {
+            g_candidateFrames = g_candidateKey == key ? g_candidateFrames + 1 : 1;
+            g_candidateKey = key;
+            if (g_candidateFrames >= kWeaponSwitchFrames)
+            {
+                g_weaponKey = key;
+                std::string name = std::string("Weapon ") + key;
+                for (const KnownWeapon& k : kKnownWeapons)
+                    if (g_weaponKey == k.key)
+                        name = k.name;
+                AVP_LOG(kLog, "weapon: %s (%s; %d held model(s), the gun VB %p)", name.c_str(), key, g_heldCount, h.vb);
+                settings::SetCurrentWeapon(key, name.c_str());
+            }
+        }
+    }
+    g_heldCount = 0;
+    g_heldCurrent = -1;
+}
 
 bool PlaceOnController(float* header)
 {
@@ -858,8 +1016,9 @@ void Upload(ID3D11DeviceContext* c, const float* data)
 }
 
 // A newly uploaded model's first draw: classify it, rewrite its bones / placement when asked.
-void StartModel(ID3D11DeviceContext* c, ID3D11Buffer* vb)
+void StartModel(ID3D11DeviceContext* c, ID3D11Buffer* vb, bool secondRender)
 {
+    g_heldCurrent = -1;
     if (g_modelVB && g_modelFirstPerson)
         NoteFrameModel(g_modelVB, g_modelDraws);
     g_modelVB = vb;
@@ -889,31 +1048,34 @@ void StartModel(ID3D11DeviceContext* c, ID3D11Buffer* vb)
     if (g_role == Role::Body)
     {
         // The game's own hand centres, before any rewrite: where a held weapon is.
+        const ArmRig* arms = PlayerArms();
         float w[16];
         std::memcpy(w, g_snap, sizeof(w));
-        bool both = true;
-        for (int h = 0; h < 2; ++h)
+        bool both = arms != nullptr;
+        for (int h = 0; h < 2 && arms; ++h)
         {
             float p[3];
-            both = HandCentreModel(g_snap, kMarineArms[h], p) && both;
+            both = HandCentreModel(g_snap, arms[h], p) && both;
             if (both)
                 PointTimes(p, w, g_gameHand[h]);
         }
         if (both)
             g_gameHandTick = GetTickCount();
-        if (settings::ArmsFollowControllers() && Global<int>(addr::g_PlayerSpecies) == 2)
+        if (settings::ArmsFollowControllers() && arms)
         {
             changed = OffsetBody(copy) || changed; // first: the arms' IK starts from the moved, turned shoulders
-            changed = TurnTorso(copy) || changed;
-            changed = ArmToController(copy, 0, kMarineArms[0]) || changed;
-            changed = ArmToController(copy, 1, kMarineArms[1]) || changed;
+            if (Global<int>(addr::g_PlayerSpecies) == 2)
+                changed = TurnTorso(copy) || changed; // the Marine's bones (its idle pose holds the left shoulder forward)
+            g_haveRightHandMove = false;
+            changed = ArmToController(copy, 1, arms[1]) || changed; // the weapon hand first (two-handed: the off
+            changed = ArmToController(copy, 0, arms[0]) || changed; // hand takes its move)
         }
         changed = HideBones(copy) || changed;
     }
     else if (Global<int>(addr::g_PlayerSpecies) == 2)
     {
-        std::memcpy(g_gunWorld, g_snap, sizeof(g_gunWorld)); // the game's own placement, for the shots
-        g_gunWorldTick = GetTickCount();
+        if (!secondRender)
+            NoteHeldModel(vb, g_snap); // the game's own placement, for the gun choice at Present (shots, weapon id)
         if (settings::GunOnRightController())
             changed = PlaceOnController(copy);
     }
@@ -1147,9 +1309,10 @@ void LogBoneMap(ID3D11DeviceContext* c)
     // Each arm's joints: the centre of the vertices skinned across a joint's two segments, each vertex weighted by the
     // smaller of its two shares. Joint j joins segments j and j + 1: shoulder (other / upper), elbow (upper / fore),
     // wrist (fore / hand).
-    for (int arm = 0; arm < 2; ++arm)
+    const ArmRig* arms = PlayerArms();
+    for (int arm = 0; arm < 2 && arms; ++arm)
     {
-        const ArmRig& r = kMarineArms[arm];
+        const ArmRig& r = arms[arm];
         double joint[3][4] = {}, seg[4][4] = {}; // x y z, weight
         for (size_t v = 0; v < vertexCount; ++v)
         {
@@ -1270,9 +1433,11 @@ void OnDraw(ID3D11DeviceContext* c, int pass, unsigned drawNo, unsigned indexCou
     if (g_fillSeq != g_handledFill)
     {
         g_handledFill = g_fillSeq;
-        StartModel(c, vb);
+        StartModel(c, vb, secondRender);
     }
     ++g_modelDraws;
+    if (g_role == Role::Weapon && !secondRender)
+        NoteHeldPart(indexCount);
     if (g_role == Role::Body && !secondRender && g_bodyVB != g_mappedBodyVB)
     {
         // Collect the body's parts this frame for the bone map (done at Present).
@@ -1294,6 +1459,16 @@ void OnDraw(ID3D11DeviceContext* c, int pass, unsigned drawNo, unsigned indexCou
 void OnPresent(ID3D11DeviceContext* ctx)
 {
     UpdateTwoHanded();
+    ChooseGun();
+    // The species' body / IK values (settings profiles), switched when the playing species changes.
+    static int lastSpecies = -1;
+    const int species = Global<int>(addr::g_PlayerSpecies);
+    if (species != lastSpecies && species >= 0 && species <= 2)
+    {
+        static const char* const kSpeciesNames[3] = {"Predator", "Alien", "Marine"};
+        lastSpecies = species;
+        settings::SetCurrentSpecies(kSpeciesNames[species], kSpeciesNames[species]);
+    }
     if (g_modelVB && g_modelFirstPerson)
         NoteFrameModel(g_modelVB, g_modelDraws);
     // The body = the first-person model with the most parts this frame. Once its bone map found the arms' joints it's
@@ -1314,7 +1489,9 @@ void OnPresent(ID3D11DeviceContext* ctx)
     const DWORD now = GetTickCount();
     if (bodySeen)
         bodyLastSeen = now;
-    const bool locked = g_bodyVB && g_haveJoints[0] && g_haveJoints[1] && now - bodyLastSeen < 1000;
+    // (A species without an arm rig -- the Alien -- locks once mapped: its bodies flapped, each switch a new read-back.)
+    const bool mapped = PlayerArms() ? g_haveJoints[0] && g_haveJoints[1] : g_bodyVB == g_mappedBodyVB;
+    const bool locked = g_bodyVB && mapped && now - bodyLastSeen < 1000;
     if (body && body != g_bodyVB && most >= 4 && !locked)
     {
         AVP_LOG(kLog, "body model: VB %p (%u parts); %d first-person model(s) this frame", body, most, g_frameModelCount);

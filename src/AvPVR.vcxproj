@@ -90,10 +90,12 @@
     <ClCompile Include="vr\vr_input.cpp" />
     <ClCompile Include="hooks\xinput_hook.cpp" />
     <ClCompile Include="hooks\quit_hook.cpp" />
+    <ClCompile Include="hooks\video_hook.cpp" />
     <ClCompile Include="hooks\first_person.cpp" />
     <ClCompile Include="vr\head_aim.cpp" />
     <ClCompile Include="vr\shots.cpp" />
     <ClCompile Include="vr\laser.cpp" />
+    <ClCompile Include="vr\opaque_pass.cpp" />
     <ClCompile Include="core\settings.cpp" />
     <ClCompile Include="hooks\render_twice_experiment.cpp" />
     <ClCompile Include="hooks\vmt_shadow.cpp" />
@@ -118,10 +120,12 @@
     <ClInclude Include="vr\vr_input.h" />
     <ClInclude Include="hooks\xinput_hook.h" />
     <ClInclude Include="hooks\quit_hook.h" />
+    <ClInclude Include="hooks\video_hook.h" />
     <ClInclude Include="hooks\first_person.h" />
     <ClInclude Include="vr\head_aim.h" />
     <ClInclude Include="vr\shots.h" />
     <ClInclude Include="vr\laser.h" />
+    <ClInclude Include="vr\opaque_pass.h" />
     <ClInclude Include="core\settings.h" />
     <ClInclude Include="hooks\hud_passes.h" />
     <ClInclude Include="hooks\render_twice_experiment.h" />

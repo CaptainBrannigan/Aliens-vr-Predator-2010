@@ -51,11 +51,29 @@ grip on the barrel, from the MOHW mod).
 
 ## Next
 
-1. **6DoF head position** (goal 3), port `reference/mohw_port/hooks/head_position.*`.
+1. **6DoF head position** (goal 3), after v0.198 (`src/vr/stereo.cpp` UpdateHeadPosition): the play space is anchored
+   in the world; across, the character **walks after the real head** through left-stick input while the player's
+   stick is idle (the game's collision, multiplayer-safe), the view leading it by at most 20 cm; past 0.5 m (a wall)
+   the play space slides; the player's own stick, jumps, stairs and lifts carry the play space; turns pivot about the
+   head; up and down is view only. Live: works for the Marine; the fast Alien / Predator overshot and circled the
+   spot (stronger stick = wider circles) -- the walk now aims where the head will be after a 0.25 s coast (braking,
+   and sideways drift steered out). Retest.
 2. **Alien and Predator**: hands / attacks on the controllers (their first-person bodies and attack code).
-3. Holsters (the weapon in whichever hand grips it), per-weapon shot origins, the game's arm animation off, melee
-   gestures.
-4. Multiplayer pause menu on the flat screen (from the logged menu state).
+3. Holsters (the weapon in whichever hand grips it), the game's arm animation off, melee gestures. (Per-weapon gun
+   and shot values: after v0.198, keyed by the drawn gun's mesh; pistol and pulse rifle identified.)
+4. Multiplayer pause menu on the flat screen (from the logged menu state). In-game menu / movies cut off once the
+   player was loaded (2026-10-18): EyeFovBetweenFrames left view 0's projection (+0xE4..+0x10C) wide; flat frames now
+   give the game's own back (RestoreGameView). Videos inside GUI screens came out black but for a decloak effect: they
+   write alpha 0 and the screen overlay blended by alpha -- now premultiplied. The MP menu (no pause) counts as flat
+   via "menu screen up". Premultiplying changed nothing: the movies were never flat -- some Bink movies play during
+   gameplay (no pause, no cinematic flag), drawn into the squeezed HUD panel. Now BinkOpen / BinkDoFrame are hooked
+   (binkw32.dll) and a video 640+ wide decoding frames sends the frame flat (hooks/video_hook.*). MP menu confirmed.
+   **Black cutscenes / movies FIXED (2026-10-18, user-confirmed):** the "boxed movie" (Alien, after an X press) was
+   an in-engine cutscene (cinematic flag set) already on the flat screen -- the camera apply isn't called during
+   cutscenes, so no stereo frame and the Present hook's flat path runs. The back buffer's alpha is 0 under the 3D scene
+   and Bink videos, and SteamVR showed those pixels transparent onto the black eyes even with the premultiplied flag
+   (only alpha-writing effects such as the Predator's cloak shimmer showed). The screen texture is now made opaque
+   after each copy: one alpha-only full-screen draw, game state saved and restored (vr/opaque_pass.*).
 5. Predator vision / zoom (goal 2).
 
 ## DX9 (AvP.exe)

@@ -1,12 +1,15 @@
 #include "stereo.h"
 
 #include "head_aim.h"
+#include "opaque_pass.h"
 #include "openvr_session.h"
+#include "vr_input.h"
 #include "../core/addresses.h"
 #include "../core/dev_flags.h"
 #include "../core/log.h"
 #include "../core/settings.h"
 #include "../hooks/d3d_probe.h"
+#include "../hooks/video_hook.h"
 #include "../hooks/vmt_shadow.h"
 
 #include <windows.h>
@@ -47,9 +50,13 @@ std::atomic<bool> g_recenterRequested{false}; // dashboard button (any thread)
 unsigned g_recenterCount = 0;                  // recenters done (main thread)
 DWORD g_presentThread = 0;
 float g_refYaw = 0.0f;        // head yaw at the first stereo frame (recenter reference)
+float g_refHeadPos[3] = {};   // head position then (tracking space): head position's zero
 unsigned g_stereoFrames = 0;
 float g_gameAspect = 0.0f;         // the game's global aspect (009CCD54) before VR changed it
 float g_lastWrittenAspect = -1.0f; // what VR last wrote there
+float g_lastWrittenVHalfFov = -1.0f; // view 0's vertical half FOV as VR last wrote it
+float g_gameProjection[10] = {};       // view 0's +0xE4..+0x10C as the game itself last left it
+bool g_haveGameProjection = false;
 
 ID3D11Texture2D* g_eyeTex[2] = {};
 ID3D11Texture2D* g_screenTex = nullptr;
@@ -173,6 +180,216 @@ void ReRoll(float m[9], const float ref[9])
     m[7] = d[2];
 }
 
+// A tracking-space vector in the game world, as hands and head movement are mapped: the reference yaw removed about
+// +y, OpenVR -> engine local (x, -y, -z: a 180-degree turn about x), through the player frame (columns right, down,
+// forward).
+void TrackingToWorld(const float frame[9], float vx, float vy, float vz, float out[3])
+{
+    const float c = std::cos(-g_refYaw), s = std::sin(-g_refYaw);
+    const float x = vx * c + vz * s, y = vy, z = -vx * s + vz * c;
+    const float l[3] = {x, -y, -z};
+    for (int i = 0; i < 3; ++i)
+        out[i] = frame[i * 3 + 0] * l[0] + frame[i * 3 + 1] * l[1] + frame[i * 3 + 2] * l[2];
+}
+
+// ---- Head position (settings HeadPosition, RoomScaleMove) ----
+// The play space is anchored in the world: the real head is at headWorld = anchor + map(head - recentred head), map =
+// TrackingToWorld. The residual r = headWorld - the game camera (the character's eye) is split along the body's up:
+// - Across (walking, leaning): with RoomScaleMove the character WALKS after the head -- left-stick input
+//   (input::SetMoveAssist) toward r while the player's own stick is idle, so the game's own collision and movement
+//   (and multiplayer, which replicates the input) apply. The view runs ahead of the character by at most HeadLeadCm
+//   (inside its collision capsule, so it can't see through walls). Past kMaxResidual (blocked by a wall, knocked back)
+//   the anchor slides: the play space moves rather than the character being pulled back. The player's own stick moves
+//   the anchor with the character (artificial locomotion carries the play space). Without RoomScaleMove: view only,
+//   as in the MOHW mod (the anchor always travels with the character; up to kMaxViewOnly).
+// - Up and down (crouching, standing): view only, up to kMaxVertical.
+// Turning (the player frame turns: stick turn, Alien surfaces) pivots the play space about the head, so it doesn't
+// start a walk. The hands are measured from the eye (g_eyeOffset), so they stay with the real head.
+constexpr float kMaxResidual = 0.5f;  // metres across, room-scale
+constexpr float kMaxViewOnly = 1.5f;  // metres across, view only
+constexpr float kMaxVertical = 0.6f;  // metres up / down
+constexpr float kFollowStart = 0.10f; // the walk starts past this ...
+constexpr float kFollowStop = 0.04f;  // ... and stops inside this
+constexpr float kFollowGain = 1.0f;   // stick per metre of residual, on top of RoomScaleStick
+constexpr float kCoastSeconds = 0.25f;     // how far ahead the walk aims: the character coasts after the stick lets go
+constexpr float kStoppedSpeed = 0.2f;      // m/s: the walk is over once inside kFollowStop and this slow
+constexpr float kVelocitySmoothing = 0.3f; // per frame
+constexpr float kUserStickActive = 0.15f;
+constexpr float kTeleport = 2.0f; // metres in one frame: respawn / teleport, re-anchor
+
+float g_eyeOffset[3] = {}; // this frame: the eyes' offset from the game camera (world)
+float g_anchor[3] = {};
+bool g_haveAnchor = false;
+unsigned g_anchorRecenter = 0;
+float g_lastFrame[9] = {};
+float g_lastBase[3] = {};
+bool g_following = false;
+float g_velocity[3] = {}; // the character's speed across (world units / s, smoothed)
+
+void HeadPositionOff()
+{
+    g_eyeOffset[0] = g_eyeOffset[1] = g_eyeOffset[2] = 0.0f;
+    g_haveAnchor = false;
+    g_following = false;
+    g_velocity[0] = g_velocity[1] = g_velocity[2] = 0.0f;
+    input::SetMoveAssist(0.0f, 0.0f);
+}
+
+// Once per stereo frame, after the poses and the game camera (g_base) are in.
+void UpdateHeadPosition()
+{
+    float frame[9];
+    if (!settings::HeadPosition() || !g_haveRefYaw || !aim::PlayerFrame(frame))
+    {
+        HeadPositionOff();
+        return;
+    }
+    const bool roomScale = dev::kRoomScaleMove;
+    const float rel[3] = {g_head.m[0][3] - g_refHeadPos[0], g_head.m[1][3] - g_refHeadPos[1],
+                          g_head.m[2][3] - g_refHeadPos[2]};
+    float mapped[3];
+    TrackingToWorld(frame, rel[0], rel[1], rel[2], mapped);
+    for (float& v : mapped)
+        v *= dev::kWorldUnitsPerMeter;
+    const float* base = g_base.pos;
+    input::PadState pad{};
+    const bool userMoving =
+        input::GetPad(&pad) && std::sqrt(pad.moveX * pad.moveX + pad.moveY * pad.moveY) > kUserStickActive;
+    const float down[3] = {frame[1], frame[4], frame[7]}; // the body's down
+    float moved[3] = {base[0] - g_lastBase[0], base[1] - g_lastBase[1], base[2] - g_lastBase[2]};
+    const float movedLen = std::sqrt(moved[0] * moved[0] + moved[1] * moved[1] + moved[2] * moved[2]);
+    if (g_haveAnchor && movedLen > kTeleport * dev::kWorldUnitsPerMeter)
+    {
+        AVP_LOG(kLog, "head position: the character jumped %.1f m in a frame (respawn, teleport): re-anchored",
+                movedLen / dev::kWorldUnitsPerMeter);
+        g_haveAnchor = false;
+    }
+    if (!g_haveAnchor || g_anchorRecenter != g_recenterCount)
+    {
+        for (int i = 0; i < 3; ++i)
+            g_anchor[i] = base[i] - mapped[i]; // the head on the eye
+        g_haveAnchor = true;
+        g_anchorRecenter = g_recenterCount;
+        g_following = false;
+    }
+    else
+    {
+        // Turning: keep the head where it is in the world.
+        float mappedOld[3];
+        TrackingToWorld(g_lastFrame, rel[0], rel[1], rel[2], mappedOld);
+        for (int i = 0; i < 3; ++i)
+            g_anchor[i] += (mappedOld[i] - mapped[i]) * dev::kWorldUnitsPerMeter;
+        // The character's movement up and down (jumps, stairs, lifts) always carries the play space; across, only the
+        // player's own locomotion does (or everything, view only) -- the walk after the head mustn't.
+        const float dv = moved[0] * down[0] + moved[1] * down[1] + moved[2] * down[2];
+        const bool across = !roomScale || userMoving;
+        for (int i = 0; i < 3; ++i)
+            g_anchor[i] += across ? moved[i] : down[i] * dv;
+    }
+    std::memcpy(g_lastFrame, frame, sizeof(frame));
+    std::memcpy(g_lastBase, base, sizeof(g_lastBase));
+
+    float r[3];
+    for (int i = 0; i < 3; ++i)
+        r[i] = g_anchor[i] + mapped[i] - base[i];
+    const float v = r[0] * down[0] + r[1] * down[1] + r[2] * down[2];
+    float h[3] = {r[0] - down[0] * v, r[1] - down[1] * v, r[2] - down[2] * v};
+    float len = std::sqrt(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]);
+    const float maxAcross = (roomScale ? kMaxResidual : kMaxViewOnly) * dev::kWorldUnitsPerMeter;
+    if (len > maxAcross)
+    {
+        const float k = maxAcross / len;
+        for (int i = 0; i < 3; ++i)
+        {
+            g_anchor[i] -= h[i] * (1.0f - k); // the play space slides
+            h[i] *= k;
+        }
+        len = maxAcross;
+    }
+
+    // The character's speed across (smoothed), for the walk's braking.
+    LARGE_INTEGER qpc, freq;
+    QueryPerformanceCounter(&qpc);
+    QueryPerformanceFrequency(&freq);
+    static LONGLONG lastQpc = 0;
+    const float dt = lastQpc ? static_cast<float>(qpc.QuadPart - lastQpc) / static_cast<float>(freq.QuadPart) : 0.0f;
+    lastQpc = qpc.QuadPart;
+    {
+        const float dv = moved[0] * down[0] + moved[1] * down[1] + moved[2] * down[2];
+        for (int i = 0; i < 3; ++i)
+        {
+            const float vi = dt > 0.001f && dt < 0.1f ? (moved[i] - down[i] * dv) / dt : 0.0f;
+            g_velocity[i] += (vi - g_velocity[i]) * kVelocitySmoothing;
+        }
+    }
+    const float speed = std::sqrt(g_velocity[0] * g_velocity[0] + g_velocity[1] * g_velocity[1] +
+                                  g_velocity[2] * g_velocity[2]) / dev::kWorldUnitsPerMeter;
+
+    // The walk after the head, aimed where the head will be once the character has coasted (kCoastSeconds at its
+    // speed): that releases the stick in time to stop on it, and steers out sideways drift -- without it the fast
+    // species overshot and circled the spot (2026-10-17). Stick axes = the game camera's right / forward made level
+    // (the move stick goes where the view looks).
+    float ax = 0.0f, ay = 0.0f;
+    if (roomScale && !userMoving)
+    {
+        const float lenM = len / dev::kWorldUnitsPerMeter;
+        if (lenM > kFollowStart)
+            g_following = true;
+        else if (lenM < kFollowStop && speed < kStoppedSpeed)
+            g_following = false;
+        float pred[3];
+        for (int i = 0; i < 3; ++i)
+            pred[i] = h[i] - g_velocity[i] * kCoastSeconds;
+        const float predLen = std::sqrt(pred[0] * pred[0] + pred[1] * pred[1] + pred[2] * pred[2]);
+        const float predM = predLen / dev::kWorldUnitsPerMeter;
+        const bool arriving = predM < kFollowStop || pred[0] * h[0] + pred[1] * h[1] + pred[2] * h[2] <= 0.0f;
+        if (g_following && !arriving && predLen > 1e-6f)
+        {
+            float right[3] = {g_base.rot[0], g_base.rot[3], g_base.rot[6]};
+            float fwd[3] = {g_base.rot[2], g_base.rot[5], g_base.rot[8]};
+            const float dr = right[0] * down[0] + right[1] * down[1] + right[2] * down[2];
+            const float df = fwd[0] * down[0] + fwd[1] * down[1] + fwd[2] * down[2];
+            for (int i = 0; i < 3; ++i)
+            {
+                right[i] -= down[i] * dr;
+                fwd[i] -= down[i] * df;
+            }
+            const float rl = std::sqrt(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
+            const float fl = std::sqrt(fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]);
+            if (rl > 1e-4f && fl > 1e-4f)
+            {
+                float m = dev::kRoomScaleStick + (predM - kFollowStop) * kFollowGain;
+                m = m > 1.0f ? 1.0f : m;
+                ax = (pred[0] * right[0] + pred[1] * right[1] + pred[2] * right[2]) / (rl * predLen) * m;
+                ay = (pred[0] * fwd[0] + pred[1] * fwd[1] + pred[2] * fwd[2]) / (fl * predLen) * m;
+            }
+        }
+    }
+    else
+        g_following = false;
+    input::SetMoveAssist(ax, ay);
+
+    // The eyes: across, ahead of the character by at most the lead (room-scale) or the whole residual (view only);
+    // up and down as the head.
+    const float lead = roomScale ? dev::kHeadLeadMeters * dev::kWorldUnitsPerMeter : maxAcross;
+    const float k = len > lead && len > 1e-6f ? lead / len : 1.0f;
+    const float vMax = kMaxVertical * dev::kWorldUnitsPerMeter;
+    const float vc = v > vMax ? vMax : v < -vMax ? -vMax : v;
+    for (int i = 0; i < 3; ++i)
+        g_eyeOffset[i] = h[i] * k + down[i] * vc;
+
+    static DWORD lastLog = 0;
+    if (GetTickCount() - lastLog > 2000)
+    {
+        lastLog = GetTickCount();
+        AVP_LOG(kLog,
+                "head position: residual across %.2f m, up/down %.2f m, speed %.2f m/s, %s, stick assist (%.2f %.2f)%s",
+                len / dev::kWorldUnitsPerMeter, -v / dev::kWorldUnitsPerMeter, speed,
+                roomScale ? (g_following ? "walking after the head" : "room-scale") : "view only", ax, ay,
+                userMoving ? ", player's stick" : "");
+    }
+}
+
 // eye 0 = left, 1 = right.
 EyeCamera BuildEye(int eye)
 {
@@ -220,12 +437,13 @@ EyeCamera BuildEye(int eye)
         QuatToRot(q, c.rot);
     }
 
-    // Eye position: base position + camera right axis (rotation column 0) * the eye's half-IPD.
+    // Eye position: base position + the head's movement (head position) + camera right axis (rotation column 0) * the
+    // eye's half-IPD.
     const vr::EyeGeometry& g = vr::Eye(eye);
     const float side = g.offset[0] * dev::kWorldUnitsPerMeter * settings::IpdScale() * dev::kEyeRightSign;
-    c.pos[0] = g_base.pos[0] + c.rot[0] * side;
-    c.pos[1] = g_base.pos[1] + c.rot[3] * side;
-    c.pos[2] = g_base.pos[2] + c.rot[6] * side;
+    c.pos[0] = g_base.pos[0] + g_eyeOffset[0] + c.rot[0] * side;
+    c.pos[1] = g_base.pos[1] + g_eyeOffset[1] + c.rot[3] * side;
+    c.pos[2] = g_base.pos[2] + g_eyeOffset[2] + c.rot[6] * side;
 
     // Symmetric frustum covering the eye's asymmetric one; Submit bounds crop it back.
     const float tanH = (std::fabs(g.tanLeft) > std::fabs(g.tanRight) ? std::fabs(g.tanLeft) : std::fabs(g.tanRight));
@@ -247,7 +465,7 @@ EyeCamera BuildEye(int eye)
     constexpr float kDeg = 0.01745329252f;
     const float hudTanW = std::tan(settings::HudWidthDeg() * 0.5f * kDeg);
     const float hudTanH = hudTanW * (9.0f / 16.0f);
-    const float distance = settings::HudDistance() > 0.1f ? settings::HudDistance() : 0.1f;
+    const float distance = settings::HudDistance() > 0.01f ? settings::HudDistance() : 0.01f;
     const float centreTanX = -g.offset[0] / distance;
     const float centreTanY = std::tan(settings::HudHeightDeg() * kDeg);
     const float centreU = 0.5f + 0.5f * centreTanX / tanH;
@@ -282,6 +500,7 @@ void ApplyEye(const EyeCamera& c)
     g_lastWrittenAspect = c.aspect;
     SetHorizontalFov(c.fullHFov, 1.0f);
     std::memcpy(g_hudPanel, c.hudPanel, sizeof(g_hudPanel));
+    g_lastWrittenVHalfFov = views[0].vHalfFov; // RestoreGameView: still ours?
     Global<uint8_t>(addr::g_CameraDirty) = 1;
 }
 
@@ -294,6 +513,24 @@ void RestoreGameAspect()
         globalAspect = g_gameAspect;
         g_lastWrittenAspect = -1.0f;
     }
+}
+
+// Flat frames (the in-game menu, cinematics, movies) after gameplay: the global aspect, and view 0's own projection
+// (aspect and FOV, +0xE4..+0x10C) if it still holds what the mod last wrote -- EyeFovBetweenFrames leaves the eyes' wide
+// field of view there between frames, and the game doesn't rewrite it for those screens, which came out cut off top
+// and bottom, movies partly black (2026-10-18). A cinematic camera that set its own is left alone.
+void RestoreGameView()
+{
+    RestoreGameAspect();
+    ViewCamera& v = ViewCameras()[0];
+    if (g_lastWrittenVHalfFov > 0.0f && v.vHalfFov == g_lastWrittenVHalfFov && g_haveGameProjection)
+    {
+        std::memcpy(&v.aspect, g_gameProjection, sizeof(g_gameProjection));
+        Global<uint8_t>(addr::g_CameraDirty) = 1;
+        AVP_LOG(kLog, "flat frame: view 0's projection given back (v half FOV %.1f -> %.1f deg)",
+                g_lastWrittenVHalfFov * 57.29578f, v.vHalfFov * 57.29578f);
+    }
+    g_lastWrittenVHalfFov = -1.0f;
 }
 
 bool EnsureTextures(ID3D11Device* device, ID3D11Resource* backBuffer)
@@ -312,7 +549,7 @@ bool EnsureTextures(ID3D11Device* device, ID3D11Resource* backBuffer)
             (*t)->Release();
             *t = nullptr;
         }
-    d.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    d.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET; // render target: opaque_pass.h
     d.MiscFlags = 0;
     d.CPUAccessFlags = 0;
     d.Usage = D3D11_USAGE_DEFAULT;
@@ -340,18 +577,69 @@ bool EnsureTextures(ID3D11Device* device, ID3D11Resource* backBuffer)
 void __fastcall CamApplyReplacement(void* self, void* /*edx*/, void* entity)
 {
     OriginalCamApply(self, entity);
+    {
+        // Which camera component applies (2026-10-18: an Alien sequence after an X press -- no movie, pause or
+        // cinematic flag -- rendered into the HUD panel's box; is it another camera?). Its shadow vtable names the
+        // class (avpvr_shadow.log). Each change logged, at most 20 a second.
+        static uintptr_t lastVt = 0;
+        static void* lastSelf = nullptr;
+        static DWORD second = 0;
+        static int inSecond = 0;
+        const uintptr_t vt = *static_cast<const uintptr_t*>(self);
+        if (vt != lastVt || self != lastSelf)
+        {
+            const DWORD now = GetTickCount();
+            if (now - second >= 1000)
+                second = now, inSecond = 0;
+            if (++inSecond <= 20)
+                AVP_LOG(kLog, "camera apply: component %p (shadow vtable %08X), entity %p; cinematic %d, menu screen %d",
+                        self, static_cast<unsigned>(vt), entity, Global<uint8_t>(addr::g_CinematicActive),
+                        IsMenuScreenUp());
+            lastVt = vt;
+            lastSelf = self;
+        }
+    }
+    {
+        // The game's own projection, whenever view 0 holds one the mod didn't write (RestoreGameView).
+        const ViewCamera& v = ViewCameras()[0];
+        if (v.vHalfFov > 0.0f && v.vHalfFov != g_lastWrittenVHalfFov)
+        {
+            std::memcpy(g_gameProjection, &v.aspect, sizeof(g_gameProjection));
+            g_haveGameProjection = true;
+        }
+    }
     vr::TryConnect();
     if (!dev::kVrEnabled || !vr::IsConnected() || g_stereoFrame)
         return;
-    // Cutscenes and the in-game (pause) menu go to the flat screen -- with the game's own aspect and HUD viewport
-    // already back for this frame's render.
+    // Cutscenes and the in-game menus go to the flat screen -- with the game's own view back for this frame's render.
+    // A menu screen up counts too: the multiplayer menu doesn't pause the game (2026-10-18: it rendered in the eyes,
+    // cut off; "paused with menu" only catches the single player one).
     const bool pausedWithMenu = IsPausedWithMenu();
     LogMenuState(pausedWithMenu);
-    if (Global<uint8_t>(addr::g_CinematicActive) || pausedWithMenu)
+    const bool cinematic = Global<uint8_t>(addr::g_CinematicActive) != 0;
+    static bool wasFlat = false;
+    // And movies: some play during gameplay with neither (hooks/video_hook.h).
+    const bool movie = video::MoviePlaying();
+    if (cinematic || pausedWithMenu || IsMenuScreenUp() || movie)
     {
-        RestoreGameAspect();
+        RestoreGameView();
+        if (!wasFlat)
+        {
+            // What the game renders the flat frame with (movies came out black but for a cloak effect, 2026-10-18).
+            const ViewCamera* views = ViewCameras();
+            const uintptr_t cur = Global<uintptr_t>(addr::g_CurViewCamera);
+            AVP_LOG(kLog,
+                    "flat frame starts: cinematic %d, movie %d, paused menu %d, menu screen %d; current view %d (camera %08X = view "
+                    "%d), view mask %02X, views active %d%d%d%d, view 0 v half FOV %.1f deg, global aspect %.3f",
+                    cinematic, movie, pausedWithMenu, IsMenuScreenUp(), Global<int>(addr::g_CurViewIndex),
+                    static_cast<unsigned>(cur), static_cast<int>((cur - reinterpret_cast<uintptr_t>(views)) / sizeof(ViewCamera)),
+                    Global<uint8_t>(addr::g_CurViewMask), views[0].active, views[1].active, views[2].active, views[3].active,
+                    views[0].vHalfFov * 57.29578f, Global<float>(kBaseAspect));
+        }
+        wasFlat = true;
         return;
     }
+    wasFlat = false;
 
     g_head = vr::WaitPoses();
     g_posesWaited = true;
@@ -369,9 +657,13 @@ void __fastcall CamApplyReplacement(void* self, void* /*edx*/, void* entity)
         float y, p, r;
         HeadAngles(g_head, y, p, r);
         g_refYaw = y;
+        for (int i = 0; i < 3; ++i)
+            g_refHeadPos[i] = g_head.m[i][3];
         g_haveRefYaw = true;
-        AVP_LOG(kLog, "recentered: head yaw reference %.1f deg", y * 57.29578f);
+        AVP_LOG(kLog, "recentered: head yaw reference %.1f deg, head position reference (%.2f %.2f %.2f) m",
+                y * 57.29578f, g_refHeadPos[0], g_refHeadPos[1], g_refHeadPos[2]);
     }
+    UpdateHeadPosition();
     ApplyEye(BuildEye(0));
     g_stereoFrame = true;
     g_hudPanelActive = true;
@@ -428,19 +720,13 @@ bool HandToWorld(const float pose[3][4], float rot[9], float pos[3])
     float frame[9];
     if (!g_head.valid || !g_haveRefYaw || !aim::PlayerFrame(frame))
         return false;
-    // Room vector -> recentred room (the reference yaw removed about +y) -> engine local (x, -y, -z: OpenVR -> engine
-    // is a 180-degree turn about x) -> world through the player frame (columns right, down, forward).
-    const float c = std::cos(-g_refYaw), s = std::sin(-g_refYaw);
-    auto toWorld = [&](float vx, float vy, float vz, float out[3]) {
-        const float x = vx * c + vz * s, y = vy, z = -vx * s + vz * c;
-        const float l[3] = {x, -y, -z};
-        for (int i = 0; i < 3; ++i)
-            out[i] = frame[i * 3 + 0] * l[0] + frame[i * 3 + 1] * l[1] + frame[i * 3 + 2] * l[2];
-    };
+    // The hand's offset from the head, and its axes, through TrackingToWorld; from the eyes (the game camera + the
+    // head position's eye offset).
+    auto toWorld = [&](float vx, float vy, float vz, float out[3]) { TrackingToWorld(frame, vx, vy, vz, out); };
     float offset[3];
     toWorld(pose[0][3] - g_head.m[0][3], pose[1][3] - g_head.m[1][3], pose[2][3] - g_head.m[2][3], offset);
     for (int i = 0; i < 3; ++i)
-        pos[i] = g_base.pos[i] + offset[i] * dev::kWorldUnitsPerMeter;
+        pos[i] = g_base.pos[i] + g_eyeOffset[i] + offset[i] * dev::kWorldUnitsPerMeter;
     float right[3], down[3], forward[3];
     toWorld(pose[0][0], pose[1][0], pose[2][0], right);      // the controller's +x
     toWorld(-pose[0][1], -pose[1][1], -pose[2][1], down);    // -y
@@ -459,11 +745,11 @@ bool WorldToTracking(const float world[3], float tracking[3], float head[3])
     float frame[9];
     if (!g_head.valid || !g_haveRefYaw || !aim::PlayerFrame(frame))
         return false;
-    // HandToWorld backwards: world offset from the game camera -> engine local (frame^T) -> OpenVR (x, -y, -z) ->
-    // the reference yaw put back -> plus the head.
+    // HandToWorld backwards: world offset from the eyes -> engine local (frame^T) -> OpenVR (x, -y, -z) -> the
+    // reference yaw put back -> plus the head.
     float o[3], l[3];
     for (int i = 0; i < 3; ++i)
-        o[i] = (world[i] - g_base.pos[i]) / dev::kWorldUnitsPerMeter;
+        o[i] = (world[i] - g_base.pos[i] - g_eyeOffset[i]) / dev::kWorldUnitsPerMeter;
     for (int k = 0; k < 3; ++k)
         l[k] = frame[0 * 3 + k] * o[0] + frame[1 * 3 + k] * o[1] + frame[2 * 3 + k] * o[2];
     const float x = l[0], y = -l[1], z = -l[2];
@@ -573,10 +859,11 @@ void OnPresent(IDXGISwapChain*, unsigned& syncInterval)
     {
         // Flat: the game's frame on the virtual screen, black in the eyes.
         g_hudPanelActive = false;
-        RestoreGameAspect();
+        RestoreGameView();
         if (!g_posesWaited)
             g_head = vr::WaitPoses();
         ctx->CopyResource(g_screenTex, backBuffer);
+        opaque::MakeOpaque(device, ctx, g_screenTex); // the back buffer's alpha is 0 under the 3D scene and movies
         vr::ShowScreen(g_screenTex, 1.0f, g_head);
         static const float full[4] = {0, 0, 1, 1};
         vr::SubmitEyes(g_blackTex, full, g_blackTex, full);

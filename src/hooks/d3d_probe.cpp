@@ -207,6 +207,7 @@ constexpr uint32_t kRenderSceneReturn = 0x0080A44B;
 constexpr uint32_t kSceneRenderBegin = 0x00808E00, kSceneRenderEnd = 0x00808F52;
 
 bool g_secondRender = false;      // the right eye's render (stereo.cpp, via SetSecondRender)
+bool g_modDraws = false;          // the mod's own draws (SetModDraws)
 uintptr_t g_frameSlot[2] = {};    // A per render (0 = not learned)
 DWORD g_lastLearn[2] = {};
 bool g_hudLatched = false;        // GUI pass reached in the current render
@@ -600,6 +601,135 @@ void NoteCopyIntoMain(bool region, ID3D11Resource* src, UINT x, UINT y)
     g_copyKinds[g_copyKindCount++] = {region, key, x, y, d.Width, d.Height, 1};
 }
 
+// ---- The GUI pass's draws, logged whenever their make-up changes (game render only) ----
+// For recognising HUD elements by signature rather than draw number (the reticle moved from the 9th to the 1st draw
+// between 2026-10-17 and -18). 2026-10-18: all 2D quads (no depth test, no bone buffer), text in one big draw.
+constexpr UINT kBoneBufferBytes = 6288; // hooks/first_person.cpp
+constexpr int kGuiSigMax = 32;
+
+struct GuiDrawSig
+{
+    UINT count;
+    int topology;
+    void* vs;
+    void* ps;
+    UINT texW, texH;
+    bool depth, skinned, mainTarget;
+    float vpW, vpH;
+};
+GuiDrawSig g_guiSig[kGuiSigMax];
+int g_guiSigCount = 0, g_guiDrawsThisFrame = 0;
+
+void NoteGuiDraw(ID3D11DeviceContext* c, UINT count)
+{
+    ++g_guiDrawsThisFrame;
+    GuiDrawSig s{};
+    s.count = count;
+    D3D11_PRIMITIVE_TOPOLOGY topo = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+    c->IAGetPrimitiveTopology(&topo);
+    s.topology = topo;
+    ID3D11VertexShader* vs = nullptr;
+    ID3D11PixelShader* ps = nullptr;
+    c->VSGetShader(&vs, nullptr, nullptr);
+    c->PSGetShader(&ps, nullptr, nullptr);
+    s.vs = vs; // compared / logged by address only
+    s.ps = ps;
+    if (vs)
+        vs->Release();
+    if (ps)
+        ps->Release();
+    ID3D11ShaderResourceView* srv = nullptr;
+    c->PSGetShaderResources(0, 1, &srv);
+    if (srv)
+    {
+        ID3D11Resource* res = nullptr;
+        srv->GetResource(&res);
+        ID3D11Texture2D* t2 = nullptr;
+        if (res && SUCCEEDED(res->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&t2))) && t2)
+        {
+            D3D11_TEXTURE2D_DESC d{};
+            t2->GetDesc(&d);
+            s.texW = d.Width;
+            s.texH = d.Height;
+            t2->Release();
+        }
+        if (res)
+            res->Release();
+        srv->Release();
+    }
+    ID3D11DepthStencilState* dss = nullptr;
+    UINT ref = 0;
+    c->OMGetDepthStencilState(&dss, &ref);
+    ID3D11RenderTargetView* rtv = nullptr;
+    ID3D11DepthStencilView* dsv = nullptr;
+    c->OMGetRenderTargets(1, &rtv, &dsv);
+    if (dss)
+    {
+        D3D11_DEPTH_STENCIL_DESC d{};
+        dss->GetDesc(&d);
+        s.depth = d.DepthEnable && dsv;
+        dss->Release();
+    }
+    s.mainTarget = IsMainTargetView(rtv);
+    if (rtv)
+        rtv->Release();
+    if (dsv)
+        dsv->Release();
+    ID3D11Buffer* cb = nullptr;
+    c->VSGetConstantBuffers(5, 1, &cb);
+    if (cb)
+    {
+        D3D11_BUFFER_DESC d{};
+        cb->GetDesc(&d);
+        s.skinned = d.ByteWidth == kBoneBufferBytes;
+        cb->Release();
+    }
+    UINT n = 1;
+    D3D11_VIEWPORT vp{};
+    c->RSGetViewports(&n, &vp);
+    s.vpW = vp.Width;
+    s.vpH = vp.Height;
+    if (g_guiSigCount < kGuiSigMax)
+        g_guiSig[g_guiSigCount++] = s;
+}
+
+// At Present: log the game render's GUI draws when their make-up (shaders, textures, states -- not counts) changed.
+void EndGuiFrame()
+{
+    static uint64_t lastKey = 0;
+    static int logs = 0;
+    static DWORD lastLog = 0;
+    uint64_t key = 1469598103934665603ull;
+    auto mix = [&key](uint64_t v) { key = (key ^ v) * 1099511628211ull; };
+    for (int i = 0; i < g_guiSigCount; ++i)
+    {
+        const GuiDrawSig& s = g_guiSig[i];
+        mix(reinterpret_cast<uintptr_t>(s.vs));
+        mix(reinterpret_cast<uintptr_t>(s.ps));
+        mix((static_cast<uint64_t>(s.texW) << 32) | s.texH);
+        mix(s.topology | (s.depth ? 0x100 : 0) | (s.skinned ? 0x200 : 0) | (s.mainTarget ? 0x400 : 0));
+    }
+    const DWORD now = GetTickCount();
+    if (g_guiSigCount && key != lastKey && logs < 300 && now - lastLog >= 250)
+    {
+        lastKey = key;
+        lastLog = now;
+        ++logs;
+        AVP_LOG(kLog, "GUI pass draws (game render): %d", g_guiDrawsThisFrame);
+        for (int i = 0; i < g_guiSigCount; ++i)
+        {
+            const GuiDrawSig& s = g_guiSig[i];
+            AVP_LOG(kLog,
+                    "  #%d: %u, topology %d, VS %p PS %p, texture 0 %ux%u, depth %d, skinned %d, target %s, "
+                    "viewport %.0fx%.0f",
+                    i + 1, s.count, s.topology, s.vs, s.ps, s.texW, s.texH, s.depth, s.skinned,
+                    s.mainTarget ? "eye image" : "offscreen", s.vpW, s.vpH);
+        }
+    }
+    g_guiSigCount = 0;
+    g_guiDrawsThisFrame = 0;
+}
+
 bool HudBeforeDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count, UINT start, INT base)
 {
     const bool inEye = stereo::InEyeRender();
@@ -621,6 +751,8 @@ bool HudBeforeDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count, UINT start
         ++g_passDrawsSecond[pass];
     else
         NoteUnlistedDraw(c, esp, inEye);
+    if (pass == kGuiPass && !g_secondRender)
+        NoteGuiDraw(c, count);
     if (inEye)
         fp::OnDraw(c, pass, g_drawInPass, count, start, base, g_secondRender);
 
@@ -652,15 +784,16 @@ bool HudBeforeDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count, UINT start
         }
     }
 
-    // Marine reticle (settings HideMarineReticle): the GUI pass's 9th draw (user-found with the debug rows,
-    // 2026-10-17; not the reticle for the Alien or Predator). Its signature is logged for a sturdier match later.
-    if (pass == kGuiPass && g_drawInPass == 9 && settings::HideMarineReticle() && Global<int>(addr::g_PlayerSpecies) == 2)
+    // Marine reticle (settings HideMarineReticle): the GUI pass's 1st draw (user-found with the debug rows,
+    // 2026-10-18; it was the 9th on 2026-10-17 -- the GUI pass's draws shifted since; not the reticle for the Alien or
+    // Predator). Its signature is logged for a sturdier match later.
+    if (pass == kGuiPass && g_drawInPass == 1 && settings::HideMarineReticle() && Global<int>(addr::g_PlayerSpecies) == 2)
     {
         static int logged = 0;
         if (logged < 3)
         {
             ++logged;
-            LogHiddenDraw(c, passKey, 9, count);
+            LogHiddenDraw(c, passKey, 1, count);
         }
         return true;
     }
@@ -708,6 +841,8 @@ void STDMETHODCALLTYPE Hook_OMSetRenderTargets(ID3D11DeviceContext* c, UINT n, I
 // true = skip the draw (debug hide)
 inline bool CountDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count, UINT start = 0, INT base = 0)
 {
+    if (g_modDraws)
+        return false; // the mod's own (vr/opaque_pass.cpp): never counted or hidden
     if (g_presentThread && GetCurrentThreadId() != g_presentThread)
     {
         g_otherThreadDrawsSecond.fetch_add(1, std::memory_order_relaxed);
@@ -859,6 +994,7 @@ HRESULT STDMETHODCALLTYPE Hook_Present(IDXGISwapChain* sc, UINT sync, UINT flags
     g_second.viewports += g_frame.viewports;
     g_frame = Counters{};
     ++g_framesThisSecond;
+    EndGuiFrame();
 
     const int viewCount = Global<int>(addr::g_ViewCount);
     if (g_framesThisSecond > 1 && viewCount != g_viewCountSeen)
@@ -1022,6 +1158,8 @@ void ResetHudViewport(ID3D11DeviceContext* ctx)
 }
 
 void SetSecondRender(bool on) { g_secondRender = on; }
+
+void SetModDraws(bool on) { g_modDraws = on; }
 
 void StartD3DProbe()
 {

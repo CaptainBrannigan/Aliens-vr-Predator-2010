@@ -67,6 +67,10 @@ Camera component class: vtable `0091D694` (ctor `FUN_00696d00`). Four more subcl
 the apply/update slots: `00920054`, `00921360`, `009226E4`, `00923280` (probably per-species/vehicle).
 
 `DAT_009ea24d` = **"cinematic playing" flag** (gates the cutscene camera and the player look/input code) — medium-high.
+Confirmed 2026-10-18: set for the whole of in-engine cutscenes (e.g. the Alien's after an X press), during which the
+camera component's apply is NOT called -- the cutscene camera writes view 0 itself (own FOV 75 x 46.7 deg, aspect 16:9).
+The back buffer's alpha is 0 under the 3D scene and Bink videos (menus write 1): anything showing it needs alpha forced.
+`"-letterbox"` (`FUN_0063c5f0`) is only the console's full-screen FMV command options, not cutscene state.
 
 ### Multi-view lead (unverified, potentially big)
 The engine loops over views (`FUN_0063e6b0`, `FUN_00662780`, `FUN_0075cc60` allocates per-view arrays).
@@ -286,6 +290,15 @@ That's what the live test answers.
   an elbow swivel turns the IK's elbow about the shoulder-wrist line (+ from the arm's outward side toward down; the
   forearm-continuation hint alone leaves the elbows a little high and out). The twist bones sit
   outside the 1-based hide ranges above: an arm move that leaves them out stretches the wrist and upper arm.
+- **Predator body** (bone map 2026-10-17; same mesh-queue pass; 17 parts, 17740 vertices, same vertex layout; the
+  user's parts: biceps 7, forearms 13, hands 15, fingernails 16, the body drawn first so draw = part). 0-based:
+  torso 1-4 (4 = chest, y -1.84: the Predator stands ~22 cm taller), 65 neck / head, 53 head back; left arm: clavicle
+  6 (tiny), upper arm 7, forearm 8, hand 9, fingers 10-24 (5 x 3, tips 12 15 18 21 24 in part 16), gauntlet 25
+  (heavy, parts 1-5 = its wrist computer, and 13) and 26, wrist blades 27, 29 (part 14); right: 30, 31, 32, 33, 34-48,
+  gauntlet 49, blades 50, 52. Legs 54-61, front 62-64. In `kPredatorArms` (`first_person.cpp`): the gauntlet and
+  blades ride the forearm with half the hand's roll.
+- **Alien**: no rig yet; its first-person bodies (4- and 5-part models) flapped with a nearby 20-part human body (a
+  kill), re-reading the bone map at each switch; an unrigged species' body now locks once mapped.
 - **Marine body vertex** (stride 64, read back 2026-10-17): +0 position float3, +12 blend indices as 4 bytes (live:
   `57 1 0 0` with weights 0.94 / 0.06; +16 repeats the first bytes, purpose unknown), +20 blend weights as 4 x SHORT4N (`FF 7F 00 00 00 00 00 00` = 1, 0, 0, 0), +28 / +36 / +44 normal, tangent,
   binormal as half4, +52 two half2 UVs, +60 a float (1.0). Weight detection that only tried bytes missed it, so the
@@ -465,3 +478,13 @@ uses it with the character's handle (`char + vbase + 8`) and range `[009AAA18]`.
 first-person model that isn't the body" also caught props passing within 1.5 m (a billboard, a light fixture snapped
 to the hand, user-seen). The weapon is now a first-person model whose origin is within 0.35 m of the game's own hand
 centre (the pistol: 0.09 m), and the body, once its bone map found both arms' joints, is kept while it's drawn.
+
+**Which weapon (live 2026-10-17, pistol <-> pulse rifle):** the weapon's type number (`+0x40`) is **0 for both**
+(plain Ranged Weapons, class `00935E90`: what tells weapons apart is their data, not the class); each weapon is its
+own object (the player's two, owner entity the same, after a reload), so objects only identify a weapon within a
+level. **The drawn gun mesh identifies it**: part count + its first two parts' index counts -- pistol `m10_2305_197`
+(10 parts: 2305 197 271 171 1548 138 137 19 1438 381), pulse rifle `m8_2693_284` (8 parts: 2693 284 57 71 540 1649
+115 6) plus a separate held 1-part model of 4 indices drawn twice (its ammo counter's two digits). The counter was
+also taken for "the gun" on some frames (the shot origin moved by a few cm): the gun is now the held model with the
+most parts. Per-weapon settings (gun offsets / angles, shot origin / angles) switch with the mesh id
+(`settings::SetCurrentWeapon`, `Weapon.<id>.<setting>` in the ini).

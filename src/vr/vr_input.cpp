@@ -460,6 +460,26 @@ void Update()
 
 bool GripHeld(int hand) { return hand >= 0 && hand <= 1 && g_gripHeld[hand].load(std::memory_order_relaxed); }
 
+namespace {
+std::atomic<float> g_assistX{0.0f}, g_assistY{0.0f};
+std::atomic<DWORD> g_assistTick{0};
+constexpr DWORD kAssistStaleMs = 100; // no update for this long (menus, cutscenes: no stereo frames) = no assist
+}
+
+void SetMoveAssist(float x, float y)
+{
+    g_assistX.store(x, std::memory_order_relaxed);
+    g_assistY.store(y, std::memory_order_relaxed);
+    g_assistTick.store(GetTickCount(), std::memory_order_relaxed);
+}
+
+void GetMoveAssist(float* x, float* y)
+{
+    const bool fresh = GetTickCount() - g_assistTick.load(std::memory_order_relaxed) < kAssistStaleMs;
+    *x = fresh ? g_assistX.load(std::memory_order_relaxed) : 0.0f;
+    *y = fresh ? g_assistY.load(std::memory_order_relaxed) : 0.0f;
+}
+
 void Shutdown()
 {
     g_ready = false;

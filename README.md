@@ -3,7 +3,21 @@
 A VR mod for **Aliens vs Predator (2010)**, the DX11 executable (`AvP_DX11.exe`, Steam build), through in-process
 32-bit SteamVR. Loaded as a `dxgi.dll` proxy from the game folder. Progress and plans: `docs/ROADMAP.md`.
 
-## Status: v0.198 (2026-10-17)
+## Status: v0.199 (2026-10-18)
+
+**v0.199: 6DoF, profiles, Predator arms, cutscenes.**
+- **Positional head tracking (6DoF)**: the view moves with your head inside an anchored play space. It doesn't move the
+  character.
+- The **Predator's arms** follow the controllers too (its own bone rig).
+- **Profiles**: every setting is kept per class, switched with the class you play. The gun, shot and two-handed values
+  are also kept per weapon (pistol and pulse rifle identified by their mesh). The dashboard hides settings the class
+  doesn't use, and the hand placement is one set, mirrored for the left hand.
+- **Cutscenes and movies** show in full on the flat screen. They were black except for the Predator's cloak shimmer:
+  the game's frame has zero alpha there, and the screen is now made opaque. The multiplayer menu goes to the flat
+  screen too.
+- The **Marine reticle** hide is back (now the GUI pass's first draw). HUD distance is in cm (minimum 1 cm).
+- Untested: two-handed aim with the left hand kept relative to the right, and the **Head look** group (the look
+  offset with the head aim toggle).
 
 **v0.198: the Marine aims with the gun.** The weapon model is on the right controller and **shots leave the drawn
 gun along its barrel** while the view and the look stay on the head (verified in single player and multiplayer).
@@ -15,7 +29,9 @@ MOHW mod; untested here). Props passing close by no longer get mistaken for the 
 
 **v0.15: Marine arms on the motion controllers** (render only). Each hand sits on its controller and two-bone IK
 bends the elbows; the shoulders stay on the body. The body, torso and elbows are adjustable in the dashboard's
-**Hands** group, each hand's placement in **Left hand** / **Right hand** (cm and degrees), the gun's in **Weapon**.
+**Hands** group, the hands' placement in **Hand placement** (one set, mirrored for the left; cm and degrees), the
+gun's in **Weapon**. Every setting is kept per class (Marine / Predator / Alien, switched with the class played), the
+gun and shot values also per weapon; the dashboard hides what the class playing doesn't use.
 
 **v0.1: head look and stereo are complete** for all three species, single player and multiplayer (multiplayer not yet
 tested with a second player). Verified in the headset:
@@ -29,14 +45,10 @@ tested with a second player). Verified in the headset:
 - Level reloads within a session.
 
 - **Head aim** for all three species: the head aims (shots follow it), the right stick turns; the view is the game's
-  camera plus the head's difference, upright on Alien walls and ceilings; per-species aim offsets.
+  camera plus the head's difference, upright on Alien walls and ceilings; a per-class look direction offset.
 
-Known issue: the **multiplayer pause menu** renders in the eyes, cut off (multiplayer doesn't stop time, so it isn't
-detected as a pause; its state is logged for a fix).
-
-Not done yet: positional (6DoF) head tracking, Alien / Predator hands and attacks, holsters (the weapon in whichever
-hand grips it), per-weapon shot origins, the game's arm animation switched off (hands locked to the controllers),
-melee gestures.
+Not done yet: Alien hands, Alien / Predator attacks, holsters (the weapon in whichever hand grips it), the game's arm
+animation switched off (hands locked to the controllers), melee gestures, room-scale walking that moves the character.
 
 ## Using it
 

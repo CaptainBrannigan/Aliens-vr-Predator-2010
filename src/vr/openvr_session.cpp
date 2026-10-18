@@ -224,6 +224,11 @@ void ShowScreen(ID3D11Texture2D* texture, float texelAspect, const Pose& head)
             return;
         }
         g_overlay->SetOverlayWidthInMeters(g_screen, kScreenWidthMeters);
+        // Premultiplied: the colour shows whatever the alpha (the eyes behind it are black). Videos inside GUI screens
+        // write alpha 0, so with the plain alpha blend they came out black but for what wrote alpha (a Predator's
+        // decloak effect, 2026-10-18). That alone didn't do it (still black): the texture is made opaque as well
+        // (vr/opaque_pass.h).
+        g_overlay->SetOverlayFlag(g_screen, ::vr::VROverlayFlags_IsPremultiplied, true);
     }
     if (!g_screenVisible && head.valid)
     {

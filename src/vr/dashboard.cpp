@@ -21,7 +21,7 @@ namespace {
 constexpr const char* kLog = "avpvr_dashboard.log";
 
 constexpr int kWidth = 2400;
-constexpr int kHeight = 1080;
+constexpr int kHeight = 1200;
 constexpr int kThumbSize = 256;
 
 // Layout.
@@ -56,11 +56,12 @@ int g_hover = -1;
 
 int ColumnForGroup(const char* group)
 {
-    // Column 0: View, HUD, Aiming; column 1: Controls, Aim offsets, Hands, Debug; column 2: Weapon, Left / Right hand.
-    if (strcmp(group, "Controls") == 0 || strcmp(group, "Aim offsets") == 0 || strcmp(group, "Hands") == 0 ||
+    // Column 0: View, HUD, Aiming; column 1: Head look, Controls, Hands, Debug; column 2: Weapon, Hand
+    // placement.
+    if (strcmp(group, "Controls") == 0 || strcmp(group, "Head look") == 0 || strcmp(group, "Hands") == 0 ||
         strcmp(group, "Debug") == 0)
         return 1;
-    if (strcmp(group, "Weapon") == 0 || strcmp(group, "Left hand") == 0 || strcmp(group, "Right hand") == 0)
+    if (strcmp(group, "Weapon") == 0 || strcmp(group, "Hand placement") == 0)
         return 2;
     return 0;
 }
@@ -182,7 +183,7 @@ void DrawMenu(Canvas& c)
     for (int i = 0, n = settings::MenuCount(); i < n; ++i)
     {
         settings::MenuInfo info{};
-        if (!settings::GetMenu(i, &info))
+        if (!settings::GetMenu(i, &info) || info.hidden)
             continue;
         const int col = ColumnForGroup(info.group);
         const int x = kColumnX[col];
@@ -208,6 +209,14 @@ void DrawMenu(Canvas& c)
             RECT button{right - kToggleWidth, top, right, bottom};
             const bool on = info.value != 0.0f;
             DrawButton(c, button, on ? "ON" : "OFF", rowFont, on ? kToggleOn : kButton, i, 1);
+        }
+        else if (info.isInfo)
+        {
+            // label  text (read-only, in the accent colour)
+            RECT label{x + 12, row.top, x + kColumnWidth / 2 + 60, row.bottom};
+            RECT text{label.right + 8, row.top, right - 4, row.bottom};
+            c.Text(info.label, label, rowFont, kTextColor, DT_LEFT | DT_END_ELLIPSIS);
+            c.Text(info.text, text, rowFont, kAccent, DT_RIGHT | DT_END_ELLIPSIS);
         }
         else if (info.isChoice)
         {

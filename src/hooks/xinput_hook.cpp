@@ -62,6 +62,17 @@ DWORD WINAPI Hooked(DWORD userIndex, XINPUT_STATE* state)
         pad.sThumbLX = ToThumb(vr.moveX * scale);
         pad.sThumbLY = ToThumb(vr.moveY * scale);
     }
+    else
+    {
+        // Head follow (vr/stereo.cpp): the character walks after the player's real head; only while the stick is idle.
+        float ax = 0.0f, ay = 0.0f;
+        input::GetMoveAssist(&ax, &ay);
+        if (ax != 0.0f || ay != 0.0f)
+        {
+            pad.sThumbLX = ToThumb(ax);
+            pad.sThumbLY = ToThumb(ay);
+        }
+    }
     if (std::fabs(vr.turnX) > kVrStickActiveThreshold || std::fabs(vr.turnY) > kVrStickActiveThreshold)
     {
         const float speed = settings::TurnSpeed();

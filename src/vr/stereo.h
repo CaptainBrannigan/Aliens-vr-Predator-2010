@@ -54,9 +54,10 @@ unsigned RecenterCount();
 // The thread that presents (diagnostics).
 unsigned long PresentThread();
 
-// A hand pose from vr/vr_input.h (OpenVR tracking space) in the game's world: relative to the head, through the
-// player frame, from the game camera's position. rot = 3x3 row-major, columns = right, down, forward (the engine's
-// convention); pos = world position. False without a player frame (head aim off) or head pose.
+// A hand pose from vr/vr_input.h (OpenVR tracking space) in the game's world: relative to the head (the recentred head
+// with HeadPosition on, the eyes having moved with the real one), through the player frame, from the game camera's
+// position. rot = 3x3 row-major, columns = right, down, forward (the engine's convention); pos = world position. False
+// without a player frame (head aim off) or head pose.
 bool HandToWorld(const float pose[3][4], float rot[9], float pos[3]);
 
 // The inverse for points: a game world position in OpenVR tracking space (metres), as HandToWorld maps them (the head

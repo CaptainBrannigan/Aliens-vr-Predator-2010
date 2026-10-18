@@ -27,4 +27,7 @@ void ResetHudViewport(ID3D11DeviceContext* ctx);
 // Marks the right eye's render (from the Present hook) so GUI-pass detection uses that render's stack layout.
 void SetSecondRender(bool on);
 
+// While on, draws are the mod's own (vr/opaque_pass.cpp): passed straight through, never counted or hidden.
+void SetModDraws(bool on);
+
 } // namespace avp

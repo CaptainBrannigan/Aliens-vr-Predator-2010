@@ -19,6 +19,7 @@
 #include "../hooks/snapshot.h"
 #include "../hooks/trace_hooks.h"
 #include "../hooks/two_view_experiment.h"
+#include "../hooks/video_hook.h"
 #include "../hooks/vmt_shadow.h"
 #include "../hooks/xinput_hook.h"
 #include "../vr/head_aim.h"
@@ -75,6 +76,7 @@ void InitializeMod()
     avp::settings::Load(); // avpvr_settings.ini (adjusted in the SteamVR dashboard's AvP VR tab)
     avp::InstallXInputHook(); // virtual pad 0 from the motion controllers -- see avpvr_xinput.log
     avp::InstallQuitHook();   // clean SteamVR shutdown when the game quits
+    avp::video::Install();    // movies (Bink) to the flat screen
 
     const int hooks = avp::InstallTraceHooks();
     AVP_LOG(kLog, "%d trace hooks installed -- see avpvr_trace.log", hooks);
