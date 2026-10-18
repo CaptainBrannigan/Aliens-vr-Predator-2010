@@ -92,6 +92,8 @@
     <ClCompile Include="hooks\quit_hook.cpp" />
     <ClCompile Include="hooks\first_person.cpp" />
     <ClCompile Include="vr\head_aim.cpp" />
+    <ClCompile Include="vr\shots.cpp" />
+    <ClCompile Include="vr\laser.cpp" />
     <ClCompile Include="core\settings.cpp" />
     <ClCompile Include="hooks\render_twice_experiment.cpp" />
     <ClCompile Include="hooks\vmt_shadow.cpp" />
@@ -118,6 +120,8 @@
     <ClInclude Include="hooks\quit_hook.h" />
     <ClInclude Include="hooks\first_person.h" />
     <ClInclude Include="vr\head_aim.h" />
+    <ClInclude Include="vr\shots.h" />
+    <ClInclude Include="vr\laser.h" />
     <ClInclude Include="core\settings.h" />
     <ClInclude Include="hooks\hud_passes.h" />
     <ClInclude Include="hooks\render_twice_experiment.h" />

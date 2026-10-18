@@ -56,7 +56,7 @@ int g_hover = -1;
 
 int ColumnForGroup(const char* group)
 {
-    // Column 0: View, HUD; column 1: Controls, Aim offsets, Hands, Debug; column 2: Weapon, Left / Right hand.
+    // Column 0: View, HUD, Aiming; column 1: Controls, Aim offsets, Hands, Debug; column 2: Weapon, Left / Right hand.
     if (strcmp(group, "Controls") == 0 || strcmp(group, "Aim offsets") == 0 || strcmp(group, "Hands") == 0 ||
         strcmp(group, "Debug") == 0)
         return 1;

@@ -25,6 +25,7 @@ constexpr UINT kBoneBufferBytes = 6288;
 constexpr UINT kBonesOffset = 0x90;
 constexpr int kMaxBones = 128;
 constexpr float kFirstPersonRadius = 1.5f; // world units (~metres) from the game camera
+constexpr float kWeaponHandRadius = 0.35f; // a held weapon's origin from the game's own hand centre
 constexpr unsigned kMaxProbeDraw = 40;
 
 constexpr int kCtxMap = 14;
@@ -141,6 +142,9 @@ float g_boneCentroid[kMaxBones][3] = {};
 float g_boneWeight[kMaxBones] = {};
 bool g_haveCentroids = false;
 bool g_armLogged[2] = {}; // the arm move's first result per hand, logged once per bone map
+// The game's own hand centres (world, before the mod's rewrite) from the latest body draw: a weapon is held there.
+float g_gameHand[2][3] = {};
+DWORD g_gameHandTick = 0;
 
 // The Marine body's arms (bone map 2026-10-17, 0-based; FINDINGS section 9): upper arm + its twist bone, forearm + its
 // twist bone (at the wrist), hand + fingers. Everything else (clavicle, shoulder, torso) stays where the game puts it.
@@ -376,6 +380,32 @@ bool BodyAxes(const float w[16], float fwd[3], float up[3])
     return true;
 }
 
+// A hand's centre in model space: the hand bones' bind-space centroids under their current matrices, weighted.
+bool HandCentreModel(const float* buffer, const ArmRig& r, float p[3])
+{
+    if (!g_haveCentroids)
+        return false;
+    float total = 0.0f;
+    p[0] = p[1] = p[2] = 0.0f;
+    for (int b = r.handFirst; b <= r.handLast; ++b)
+    {
+        const float wt = g_boneWeight[b];
+        if (wt <= 0.0f)
+            continue;
+        float s[16], factor, c[3];
+        ReadBone(BoneSlot(const_cast<float*>(buffer), b), s, &factor);
+        PointTimes(g_boneCentroid[b], s, c);
+        for (int k = 0; k < 3; ++k)
+            p[k] += wt * c[k];
+        total += wt;
+    }
+    if (total <= 0.0f)
+        return false;
+    for (int k = 0; k < 3; ++k)
+        p[k] /= total;
+    return true;
+}
+
 // The share of the hand's roll (about the forearm) that the forearm twist bone at the wrist takes.
 constexpr float kForeTwistShare = 0.5f;
 
@@ -412,23 +442,9 @@ bool ArmToController(float* buffer, int hand, const ArmRig& r)
     ReadBone(BoneSlot(buffer, r.fore), sf, &factor);
     ReadBone(BoneSlot(buffer, r.handFirst), sh, &factor);
     // The hand's centre now, model space then world.
-    float p[3] = {}, total = 0.0f;
-    for (int b = r.handFirst; b <= r.handLast; ++b)
-    {
-        const float wt = g_boneWeight[b];
-        if (wt <= 0.0f)
-            continue;
-        float s[16], c[3];
-        ReadBone(BoneSlot(buffer, b), s, &factor);
-        PointTimes(g_boneCentroid[b], s, c);
-        for (int k = 0; k < 3; ++k)
-            p[k] += wt * c[k];
-        total += wt;
-    }
-    if (total <= 0.0f)
+    float p[3];
+    if (!HandCentreModel(buffer, r, p))
         return false;
-    for (float& v : p)
-        v /= total;
     float pw[3];
     PointTimes(p, w, pw);
     // The hand's world move (row vectors): v' = (v - pw) * Rd + ctrlPos, Rd = camRot * ctrlRot^T (camera frame ->
@@ -599,25 +615,121 @@ bool ArmToController(float* buffer, int hand, const ArmRig& r)
     return true;
 }
 
-// The weapon's world matrix moved onto the right controller: its axes and pose relative to the game camera carried
+// ---- Two-handed aim (ported from the MOHW mod's openvr_direct/vr_hands.cpp) ----
+// The left grip held while the left palm is on the gun's barrel line -- within the grab distance of the line running
+// forward from the gun's origin, 5 cm to the reach along it; pressing first and sliding the hand on works too --
+// points the gun at the left palm (its position only), keeping the gun's own up from the right hand so twisting it
+// still rolls the gun. The off-hand grip offset moves the aim point in the gun's frame (a hand below the bore doesn't
+// tilt the gun). Releasing the grip lets go. Decided once per frame (OnPresent); the gun placement, and with it the
+// drawn gun, the shots and the laser, follow it.
+bool g_twoHanded = false;
+
+bool LeftPalmWorld(float pos[3])
+{
+    float pose[3][4], rot[9];
+    return input::GetHandPose(0, true, pose) && stereo::HandToWorld(pose, rot, pos);
+}
+
+void UpdateTwoHanded()
+{
+    if (!settings::TwoHandedAim() || !settings::GunOnRightController() || Global<int>(addr::g_PlayerSpecies) != 2 ||
+        !input::GripHeld(0))
+    {
+        if (g_twoHanded)
+            AVP_LOG(kLog, "two-handed aim off");
+        g_twoHanded = false;
+        return;
+    }
+    if (g_twoHanded)
+        return;
+    float off[3], angles[3], rot[9], pos[3], palm[3], radius, reach, grip[2];
+    settings::GunOffset(off, angles);
+    settings::TwoHandParams(&radius, &reach, grip);
+    if (!ControllerWorld(1, off, angles, rot, pos) || !LeftPalmWorld(palm))
+        return;
+    const float fwd[3] = {rot[2], rot[5], rot[8]};
+    float to[3], perp[3];
+    Sub3(palm, pos, to);
+    const float along = Dot3(to, fwd);
+    for (int k = 0; k < 3; ++k)
+        perp[k] = to[k] - fwd[k] * along;
+    const float dist = Len3(perp);
+    if (along >= 0.05f && along <= reach && dist <= radius)
+    {
+        g_twoHanded = true;
+        AVP_LOG(kLog, "two-handed aim ON (left palm %.2f m along the barrel, %.2f m off it)", along, dist);
+        return;
+    }
+    static DWORD lastMiss = 0;
+    if (GetTickCount() - lastMiss > 1000)
+    {
+        lastMiss = GetTickCount();
+        AVP_LOG(kLog, "left grip not on the gun: %.2f m along the barrel (0.05..%.2f), %.2f m off it (max %.2f)", along,
+                reach, dist, radius);
+    }
+}
+
+// The gun's frame (columns right, down, forward) for a line from its origin to target, keeping rot's down (up) and
+// handedness. False when the target is too close to give a direction.
+bool FrameToward(const float rot[9], const float pos[3], const float target[3], float out[9])
+{
+    float f[3], d[3], r[3];
+    Sub3(target, pos, f);
+    if (Len3(f) < 0.08f || !Normalize3(f))
+        return false;
+    const float down0[3] = {rot[1], rot[4], rot[7]};
+    if (!PerpTo(f, down0, d))
+        return false;
+    Cross3(d, f, r);
+    const float right0[3] = {rot[0], rot[3], rot[6]}, fwd0[3] = {rot[2], rot[5], rot[8]};
+    float c0[3];
+    Cross3(down0, fwd0, c0);
+    if (Dot3(right0, c0) < 0.0f)
+        for (float& v : r)
+            v = -v;
+    if (!Normalize3(r))
+        return false;
+    for (int k = 0; k < 3; ++k)
+    {
+        out[k * 3 + 0] = r[k];
+        out[k * 3 + 1] = d[k];
+        out[k * 3 + 2] = f[k];
+    }
+    return true;
+}
+
+// Two-handed: rot (the right hand's gun frame) turned to aim at the left palm moved by the off-hand grip offset.
+void AimAtLeftPalm(float rot[9], const float pos[3])
+{
+    float palm[3], radius, reach, grip[2], aimed[9];
+    settings::TwoHandParams(&radius, &reach, grip);
+    if (!LeftPalmWorld(palm) || !FrameToward(rot, pos, palm, aimed))
+        return;
+    if (grip[0] != 0.0f || grip[1] != 0.0f)
+    {
+        float target[3];
+        for (int k = 0; k < 3; ++k)
+            target[k] = palm[k] + grip[0] * aimed[k * 3 + 0] - grip[1] * aimed[k * 3 + 1];
+        if (!FrameToward(rot, pos, target, aimed))
+            return;
+    }
+    std::memcpy(rot, aimed, sizeof(aimed));
+}
+
+// The weapon's world matrix w moved onto the right controller: its axes and pose relative to the game camera carried
 // over to the controller's frame, its origin at the controller + the offsets (controller frame: right, up, forward).
-bool PlaceOnController(float* header)
+// Two-handed, the frame aims at the left palm.
+bool PlacedGunWorld(const float w[16], float nw[16])
 {
     float off[3], angles[3];
     settings::GunOffset(off, angles);
     float ctrlRot[9], ctrlPos[3];
     if (!ControllerWorld(1, off, angles, ctrlRot, ctrlPos))
         return false;
+    if (g_twoHanded)
+        AimAtLeftPalm(ctrlRot, ctrlPos);
     float camRot[9], camPos[3];
     stereo::GameCamera(camRot, camPos);
-    float w[16], wvp[16], winv[16], vp[16];
-    std::memcpy(w, header, sizeof(w));
-    std::memcpy(wvp, header + 16, sizeof(wvp));
-    if (!InverseAffine(w, winv))
-        return false;
-    Mul4(winv, wvp, vp); // the view * projection the game used
-
-    float nw[16] = {};
     for (int i = 0; i < 3; ++i)
     {
         // The model axis in the camera's frame (camera columns = right, down, forward), then in the controller's.
@@ -631,6 +743,21 @@ bool PlaceOnController(float* header)
     for (int j = 0; j < 3; ++j)
         nw[12 + j] = ctrlPos[j]; // the offsets are in ctrlPos / ctrlRot already
     nw[15] = 1.0f;
+    return true;
+}
+
+// The game's weapon model's latest world matrix (any frame it was drawn first person), for GunPlacement.
+float g_gunWorld[16] = {};
+DWORD g_gunWorldTick = 0;
+
+bool PlaceOnController(float* header)
+{
+    float w[16], wvp[16], winv[16], vp[16], nw[16];
+    std::memcpy(w, header, sizeof(w));
+    std::memcpy(wvp, header + 16, sizeof(wvp));
+    if (!InverseAffine(w, winv) || !PlacedGunWorld(w, nw))
+        return false;
+    Mul4(winv, wvp, vp); // the view * projection the game used
     float nwvp[16];
     Mul4(nw, vp, nwvp);
     std::memcpy(header, nw, sizeof(nw));
@@ -743,7 +870,16 @@ void StartModel(ID3D11DeviceContext* c, ID3D11Buffer* vb)
     const float dx = g_snap[12] - camPos[0], dy = g_snap[13] - camPos[1], dz = g_snap[14] - camPos[2];
     const bool firstPerson = dx * dx + dy * dy + dz * dz < kFirstPersonRadius * kFirstPersonRadius;
     g_modelFirstPerson = firstPerson;
-    g_role = !firstPerson ? Role::Other : vb == g_bodyVB ? Role::Body : g_bodyVB ? Role::Weapon : Role::Other;
+    // The weapon = a first-person model held in one of the body's hands: its origin at the game's own hand (the
+    // Marine's pistol 0.09 m from it). Props passing close to the camera are drawn the same way but aren't held.
+    bool held = false;
+    if (firstPerson && vb != g_bodyVB && g_gameHandTick && GetTickCount() - g_gameHandTick < 500)
+        for (const float* hand : g_gameHand)
+        {
+            const float hx = g_snap[12] - hand[0], hy = g_snap[13] - hand[1], hz = g_snap[14] - hand[2];
+            held = held || hx * hx + hy * hy + hz * hz < kWeaponHandRadius * kWeaponHandRadius;
+        }
+    g_role = !firstPerson ? Role::Other : vb == g_bodyVB ? Role::Body : held ? Role::Weapon : Role::Other;
 
     if (g_role == Role::Other)
         return;
@@ -752,6 +888,19 @@ void StartModel(ID3D11DeviceContext* c, ID3D11Buffer* vb)
     bool changed = false;
     if (g_role == Role::Body)
     {
+        // The game's own hand centres, before any rewrite: where a held weapon is.
+        float w[16];
+        std::memcpy(w, g_snap, sizeof(w));
+        bool both = true;
+        for (int h = 0; h < 2; ++h)
+        {
+            float p[3];
+            both = HandCentreModel(g_snap, kMarineArms[h], p) && both;
+            if (both)
+                PointTimes(p, w, g_gameHand[h]);
+        }
+        if (both)
+            g_gameHandTick = GetTickCount();
         if (settings::ArmsFollowControllers() && Global<int>(addr::g_PlayerSpecies) == 2)
         {
             changed = OffsetBody(copy) || changed; // first: the arms' IK starts from the moved, turned shoulders
@@ -761,8 +910,13 @@ void StartModel(ID3D11DeviceContext* c, ID3D11Buffer* vb)
         }
         changed = HideBones(copy) || changed;
     }
-    else if (settings::GunOnRightController())
-        changed = PlaceOnController(copy);
+    else if (Global<int>(addr::g_PlayerSpecies) == 2)
+    {
+        std::memcpy(g_gunWorld, g_snap, sizeof(g_gunWorld)); // the game's own placement, for the shots
+        g_gunWorldTick = GetTickCount();
+        if (settings::GunOnRightController())
+            changed = PlaceOnController(copy);
+    }
     if (changed)
         Upload(c, copy);
 }
@@ -1139,18 +1293,29 @@ void OnDraw(ID3D11DeviceContext* c, int pass, unsigned drawNo, unsigned indexCou
 
 void OnPresent(ID3D11DeviceContext* ctx)
 {
+    UpdateTwoHanded();
     if (g_modelVB && g_modelFirstPerson)
         NoteFrameModel(g_modelVB, g_modelDraws);
-    // The body = the first-person model with the most parts this frame.
+    // The body = the first-person model with the most parts this frame. Once its bone map found the arms' joints it's
+    // kept while it's drawn (a nearby prop with more parts can't take over), and given up after a second without it.
     ID3D11Buffer* body = nullptr;
     unsigned most = 0;
+    bool bodySeen = false;
     for (int i = 0; i < g_frameModelCount; ++i)
+    {
+        bodySeen = bodySeen || g_frameModels[i].vb == g_bodyVB;
         if (g_frameModels[i].draws > most)
         {
             most = g_frameModels[i].draws;
             body = g_frameModels[i].vb;
         }
-    if (body && body != g_bodyVB && most >= 4)
+    }
+    static DWORD bodyLastSeen = 0;
+    const DWORD now = GetTickCount();
+    if (bodySeen)
+        bodyLastSeen = now;
+    const bool locked = g_bodyVB && g_haveJoints[0] && g_haveJoints[1] && now - bodyLastSeen < 1000;
+    if (body && body != g_bodyVB && most >= 4 && !locked)
     {
         AVP_LOG(kLog, "body model: VB %p (%u parts); %d first-person model(s) this frame", body, most, g_frameModelCount);
         g_bodyVB = body;
@@ -1169,6 +1334,19 @@ void OnPresent(ID3D11DeviceContext* ctx)
         g_mappedBodyVB = g_bodyVB;
         LogBoneMap(ctx);
     }
+}
+
+bool GunPlacement(float m[16], float placedOrigin[3])
+{
+    if (!g_gunWorldTick || GetTickCount() - g_gunWorldTick > 500)
+        return false;
+    float winv[16], nw[16];
+    if (!InverseAffine(g_gunWorld, winv) || !PlacedGunWorld(g_gunWorld, nw))
+        return false;
+    Mul4(winv, nw, m);
+    if (placedOrigin)
+        std::memcpy(placedOrigin, nw + 12, 3 * sizeof(float));
+    return true;
 }
 
 } // namespace avp::fp

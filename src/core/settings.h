@@ -29,10 +29,20 @@ float TurnSpeedDeg();        // head aim's smooth turn, right stick fully deflec
 float StickFullDeflection(); // VR stick deflection that counts as full (they rarely reach 1.0)
 float TurnSpeed();           // right stick scale for the game's own look (head aim off)
 
-bool GunOnRightController(); // test: the first-person weapon model follows the right controller (hooks/first_person.h)
+bool GunOnRightController(); // Marine: the first-person weapon model on the right controller (hooks/first_person.h)
 // Its placement from the controller: off = right, up, forward (metres); angles = pitch (+ up), yaw (+ right), roll
 // (degrees, the engine's conventions in the controller's frame).
 void GunOffset(float off[3], float angles[3]);
+bool ShotsFromGun(); // Marine: shots leave from the gun on the controller, along it (vr/shots.h)
+bool LaserSight();   // a beam along the shots' line (vr/laser.h)
+// The shots' line on the gun: off = origin right, up, forward from the gun model's origin in its own frame (metres;
+// the settings are cm); angles = pitch (+ up), yaw (+ right) from the barrel, degrees.
+void ShotOffset(float off[3], float angles[2]);
+// Two-handed aim (hooks/first_person.cpp, from the MOHW mod): the left grip held with the left palm on the gun's
+// barrel line points the gun at it. grabRadius / reach = how far from the line / along it the palm may be (metres);
+// grip = the off hand's hold from the barrel line, right / up in the gun's frame (metres).
+bool TwoHandedAim();
+void TwoHandParams(float* grabRadius, float* reach, float grip[2]);
 bool ArmsFollowControllers();  // Marine: each arm + hand follows its controller (hooks/first_person.h)
 void BodyOffset(float* forward, float* up); // the first-person body model moved from the view, metres (render only)
 float TorsoTurnDeg();   // the body's upper body turned from the stomach about the vertical, + right (render only)

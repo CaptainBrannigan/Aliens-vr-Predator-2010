@@ -90,6 +90,20 @@ constexpr uintptr_t vt_LookCtrlClassA = 0x00923C88; // species index 0: Predator
 constexpr uintptr_t vt_LookCtrlClassB = 0x009220F8; // species index 1: Alien
 constexpr uintptr_t vt_LookCtrlClassC = 0x00922E40; // species index 2: Marine
 
+// ---- Weapons (static, 2026-10-17; docs/re/FINDINGS.md section 13) ----
+// "Ranged Weapon" classes: base ctor 007B3D40 (vtable 00935E90), one class per weapon type (factory 007BBB70, type
+// number at weapon+0x40, flags at weapon+0x80 always with bit 0x80). Fire (+0xF4, 007B1060 / 007B46A0) -> per barrel
+// 007AF9E0 -> GetFireTransform (+0xE4) -> the shot spawn 007B8A00 at the returned position, oriented along the
+// returned direction.
+// GetFireTransform: thiscall(weapon; character, muzzleHash, ammo value, range, outPos[3], outDir[3], outMat[9],
+// outDist, outTarget), RET 0x24. Player: position = the muzzle attachment, direction = the character's look (+0xB0).
+constexpr uintptr_t Weapon_GetFireTransform       = 0x007B3110; // 12 classes
+constexpr uintptr_t Weapon_GetFireTransformCached = 0x007B4CC0; // vtable 009361F0 (keeps a target at +0x118)
+constexpr uintptr_t Weapon_GetFireTransformMuzzle = 0x007AB1E0; // vtable 00935930 (type 6): along the muzzle axis
+constexpr uintptr_t vt_RangedWeapons[] = {0x00935708, 0x00935820, 0x00935930, 0x00935A58, 0x00935C48,
+                                          0x00935D60, 0x00935E90, 0x00935FB0, 0x009360C0, 0x009361F0,
+                                          0x00936310, 0x00936418, 0x00936698, 0x009367A8};
+
 // ---- Input ----
 constexpr uintptr_t Input_GetActionValue         = 0x0060DED0;
 constexpr uintptr_t Input_ConsumeAction          = 0x0060DF40;

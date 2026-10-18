@@ -4,7 +4,7 @@ Generated from `avp_symbols.csv` (the source of truth; edit it, then re-run `too
 `tools/ghidra/ApplySymbols.java`).
 Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confidence: high = read from decompile/live; medium = inferred; open = unknown.
 
-112 functions, 43 globals/vtables.
+124 functions, 43 globals/vtables.
 
 ## Camera
 
@@ -136,6 +136,10 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 | `006AC740` | func | `LookCtrlSub_HandleActions678` | medium | vtable+0xA4: handles actions 6/7/8 (hold timers) |
 | `006ACBA0` | func | `LookCtrlSub_Update` | high | Subclass per-tick (vtable 00920D70 +0x08), calls LookCtrl_Update |
 | `006ACE60` | func | `LookCtrl_UpdateLook` | high | vtable+0x60: actions 0-3 -> yaw/pitch, sensitivity, assist, pitch clamp, yaw wrap -> SetLookDirection |
+| `0070E1E0` | func | `Char_GetLookDirection` | high | character vtable+0xB0: look direction char+0x50 (or via [char+0x24]+0x9C) |
+| `0070E230` | func | `Char_SetLookDirection` | high | character vtable+0xB4: writes char+0x50 (or via [char+0x24]+0x9C) |
+| `0070E280` | func | `Char_GetAimPoint` | high | character vtable+0xB8: aim point char+0x5C |
+| `0070E2D0` | func | `Char_SetAimPoint` | high | character vtable+0xBC: writes char+0x5C |
 | `0091FAB8` | data | `vt_LookCtrlBase` | high | Look controller base vtable |
 | `00920D70` | data | `vt_LookCtrlSub` | high | Look controller subclass vtable (3 siblings: 009220F8, 00922E40, 00923C88) |
 | `00A71E14` | data | `g_PlayerProfile` | medium | +0xB5 invert Y, +0xBA/+0xBB assist, +0xCC/+0xD0 sensitivity |
@@ -210,3 +214,16 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 | `0083B140` | func | `CEG_Checker2` | high | Steam CEG integrity checker (calls kill stubs) |
 | `0087992A` | func | `Audio_FormatName` | high | Audio format string (Mono/Stereo/...) - not graphics |
 | `009E1494` | data | `g_FrameDt` | medium | Frame delta time (scales speeds everywhere) |
+
+## Weapon
+
+| Address | Kind | Name | Conf. | Role |
+|---|---|---|---|---|
+| `007AB1E0` | func | `RangedWeapon_GetFireTransformMuzzle` | high | vtable+0xE4 of 00935930 (type 6): direction = muzzle matrix column 2 |
+| `007AF9E0` | func | `RangedWeapon_FireBarrel` | high | GetFireTransform (+0xE4) -> 00641530 (dir -> orientation) -> Shot_Spawn |
+| `007B1060` | func | `RangedWeapon_Fire` | high | vtable+0xF4: per barrel with ammo -> RangedWeapon_FireBarrel |
+| `007B3110` | func | `RangedWeapon_GetFireTransform` | high | vtable+0xE4: muzzle position/matrix, player dir = look (+0xB0), dist to aim point; RET 0x24 |
+| `007B3D40` | func | `RangedWeapon_Ctor` | high | 'Ranged Weapon' base ctor, vtable 00935E90, flags +0x80 |= 0x80 |
+| `007B4CC0` | func | `RangedWeapon_GetFireTransformCached` | medium | vtable+0xE4 of 009361F0: as 007B3110 with a cached transform at +0x118 |
+| `007B8A00` | func | `Shot_Spawn` | medium | thiscall on weapon+0xD0: picks the shot definition per barrel -> 007B7CD0 (entities at pos, orientation) |
+| `007BBB70` | func | `Weapon_Factory` | high | switch on weapon type -> class ctor; type stored at weapon+0x40 |

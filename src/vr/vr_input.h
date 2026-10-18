@@ -7,8 +7,8 @@
 // Every pad control is its own SteamVR action ("Gamepad: A" ...); the game resolves them per species and context
 // itself, exactly as with a real pad. Default Touch layout: sticks = sticks (and their clicks), triggers = LT / RT
 // (analog), A / B / X / Y = A / B / X / Y, thumbrest touch = LB (left) / RB (right), D-pad on double presses
-// (X = left, Y = up, B = right, A = down), Start on a held right thumbrest (0.8 s); Back unbound. Grips and hand
-// poses are declared for the motion-control work to come but drive nothing yet.
+// (X = left, Y = up, B = right, A = down), Start on a held right thumbrest (0.8 s); Back unbound. The hand poses place
+// the hands and the gun (hooks/first_person.h); the left grip held on the gun = two-handed aim; the right grip is free.
 //
 // Log: avpvr_input.log.
 
@@ -41,5 +41,8 @@ bool GetPad(PadState* out);
 // (columns = the controller's x / y / z axes, column 3 = position, metres). palm = the grip pose ("RightHandPalm" /
 // "LeftHandPalm" actions), else the aim (tip) pose. hand 0 = left, 1 = right. Any thread (copied under a lock).
 bool GetHandPose(int hand, bool palm, float m[3][4]);
+
+// A hand's grip is held (analog grip past 0.7, released below 0.4), from this frame's update. Any thread.
+bool GripHeld(int hand);
 
 } // namespace avp::input

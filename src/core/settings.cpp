@@ -77,13 +77,30 @@ const Entry kEntries[] = {
      "deg", nullptr},
     {"ElbowSwivel", "Hands", "Elbow swivel (+ lowers the elbows)", Kind::Number, 30.0f, -90.0f, 90.0f, 1.0f, 0, "deg",
      nullptr},
-    {"GunOnRightController", "Weapon", "Test: gun on the right controller", Kind::Toggle, 0.0f, 0, 0, 0, 0, "", nullptr},
+    {"GunOnRightController", "Weapon", "Gun on the right controller (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
+     nullptr},
     {"GunOffsetRight", "Weapon", "Gun offset right", Kind::Number, 0.0f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
     {"GunOffsetUp", "Weapon", "Gun offset up", Kind::Number, 0.0f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
     {"GunOffsetForward", "Weapon", "Gun offset forward", Kind::Number, 0.0f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
-    {"GunPitch", "Weapon", "Gun pitch (+ up)", Kind::Number, 0.0f, -180.0f, 180.0f, 1.0f, 0, "deg", nullptr},
+    {"GunPitch", "Weapon", "Gun pitch (+ up)", Kind::Number, -60.0f, -180.0f, 180.0f, 1.0f, 0, "deg", nullptr},
     {"GunYaw", "Weapon", "Gun yaw (+ right)", Kind::Number, 0.0f, -180.0f, 180.0f, 1.0f, 0, "deg", nullptr},
     {"GunRoll", "Weapon", "Gun roll", Kind::Number, 0.0f, -180.0f, 180.0f, 1.0f, 0, "deg", nullptr},
+    {"ShotsFromGun", "Aiming", "Shots from the gun (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
+    {"LaserSight", "Aiming", "Laser along the shots", Kind::Toggle, 0.0f, 0, 0, 0, 0, "", nullptr},
+    {"ShotOriginRight", "Aiming", "Shot origin right", Kind::Number, -0.7f, -30.0f, 30.0f, 0.1f, 1, "cm", nullptr},
+    {"ShotOriginUp", "Aiming", "Shot origin up", Kind::Number, 11.0f, -30.0f, 30.0f, 0.1f, 1, "cm", nullptr},
+    {"ShotOriginForward", "Aiming", "Shot origin forward", Kind::Number, 12.0f, -30.0f, 60.0f, 0.1f, 1, "cm", nullptr},
+    {"ShotPitch", "Aiming", "Shot pitch (+ up)", Kind::Number, 3.5f, -30.0f, 30.0f, 0.25f, 2, "deg", nullptr},
+    {"ShotYaw", "Aiming", "Shot yaw (+ right)", Kind::Number, -1.75f, -30.0f, 30.0f, 0.25f, 2, "deg", nullptr},
+    {"TwoHandedAim", "Aiming", "Two-handed aim (left grip on the gun)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
+    {"TwoHandGrabRadius", "Aiming", "Two-handed: grab distance from the barrel", Kind::Number, 15.0f, 5.0f, 40.0f, 1.0f,
+     0, "cm", nullptr},
+    {"TwoHandReach", "Aiming", "Two-handed: reach along the barrel", Kind::Number, 80.0f, 20.0f, 120.0f, 1.0f, 0, "cm",
+     nullptr},
+    {"SecondaryGripRight", "Aiming", "Two-handed: off-hand grip right", Kind::Number, 0.0f, -20.0f, 20.0f, 0.5f, 1, "cm",
+     nullptr},
+    {"SecondaryGripUp", "Aiming", "Two-handed: off-hand grip up", Kind::Number, 0.0f, -20.0f, 20.0f, 0.5f, 1, "cm",
+     nullptr},
     {"LeftHandRight", "Left hand", "Left hand offset right", Kind::Number, 0.0f, -50.0f, 50.0f, 0.1f, 1, "cm", nullptr},
     {"LeftHandUp", "Left hand", "Left hand offset up", Kind::Number, -1.0f, -50.0f, 50.0f, 0.1f, 1, "cm", nullptr},
     {"LeftHandForward", "Left hand", "Left hand offset forward", Kind::Number, -1.0f, -50.0f, 50.0f, 0.1f, 1, "cm",
@@ -148,6 +165,18 @@ enum Index
     kGunPitch,
     kGunYaw,
     kGunRoll,
+    kShotsFromGun,
+    kLaserSight,
+    kShotOriginRight,
+    kShotOriginUp,
+    kShotOriginForward,
+    kShotPitch,
+    kShotYaw,
+    kTwoHandedAim,
+    kTwoHandGrabRadius,
+    kTwoHandReach,
+    kSecondaryGripRight,
+    kSecondaryGripUp,
     kLeftHandRight,
     kLeftHandUp,
     kLeftHandForward,
@@ -286,6 +315,24 @@ float StickFullDeflection() { return g_values[kStickFullDeflection].load(std::me
 float TurnSpeed() { return g_values[kTurnSpeed].load(std::memory_order_relaxed); }
 
 bool GunOnRightController() { return g_values[kGunOnRightController].load(std::memory_order_relaxed) != 0.0f; }
+bool ShotsFromGun() { return g_values[kShotsFromGun].load(std::memory_order_relaxed) != 0.0f; }
+bool LaserSight() { return g_values[kLaserSight].load(std::memory_order_relaxed) != 0.0f; }
+bool TwoHandedAim() { return g_values[kTwoHandedAim].load(std::memory_order_relaxed) != 0.0f; }
+void TwoHandParams(float* grabRadius, float* reach, float grip[2])
+{
+    // The settings are centimetres.
+    *grabRadius = g_values[kTwoHandGrabRadius].load(std::memory_order_relaxed) * 0.01f;
+    *reach = g_values[kTwoHandReach].load(std::memory_order_relaxed) * 0.01f;
+    grip[0] = g_values[kSecondaryGripRight].load(std::memory_order_relaxed) * 0.01f;
+    grip[1] = g_values[kSecondaryGripUp].load(std::memory_order_relaxed) * 0.01f;
+}
+void ShotOffset(float off[3], float angles[2])
+{
+    for (int i = 0; i < 3; ++i)
+        off[i] = g_values[kShotOriginRight + i].load(std::memory_order_relaxed) * 0.01f; // the settings are centimetres
+    angles[0] = g_values[kShotPitch].load(std::memory_order_relaxed);
+    angles[1] = g_values[kShotYaw].load(std::memory_order_relaxed);
+}
 // Six consecutive values (right, up, forward, pitch, yaw, roll) from index first.
 void SixFrom(int first, float off[3], float angles[3])
 {

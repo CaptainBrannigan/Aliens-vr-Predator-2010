@@ -1,5 +1,6 @@
 #include "head_aim.h"
 
+#include "shots.h"
 #include "stereo.h"
 #include "vr_input.h"
 #include "../core/addresses.h"
@@ -336,7 +337,10 @@ void __fastcall SetLookDirectionReplacement(void* ctrl, void* /*edx*/, void* cha
     // steered call (2026-10-17, access violation at FFFFFFFF = misaligned SSE load).
     alignas(16) float out[4];
     if (Steer(ctrl, character, dir, out))
+    {
         OriginalSetLookDirection(ctrl, character, out, aimRaycast);
+        shots::OnLook(character, out); // the local player only: the laser along the shots' line
+    }
     else
         OriginalSetLookDirection(ctrl, character, dir, aimRaycast);
 }

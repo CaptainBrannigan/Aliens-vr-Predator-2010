@@ -10,8 +10,9 @@
 //     camera; the first-person model with the most parts per frame is the BODY (arms, hands, ...), any other the
 //     WEAPON.
 //   - The snapshot can then be rewritten and uploaded again before the draw: body bones collapsed to a point (bone
-//     hide: settings HideBodyBonesFirst..Last), the weapon's whole model moved onto the right controller (test:
-//     GunOnRightController -- its pose relative to the game camera carried over to the controller, plus offsets).
+//     hide: settings HideBodyBonesFirst..Last), the Marine's arms on the controllers (IK), the weapon's whole model
+//     moved onto the right controller (GunOnRightController -- its pose relative to the game camera carried over to
+//     the controller, plus offsets; the shots follow the same move, vr/shots.h).
 //   - Bone map, once per body model: the body's vertex / index buffers are read back (staging copies), the blend
 //     index / weight fields detected, and every bone's parts, weight and centroid (bind space) logged -- which bones
 //     are the left arm, the right arm, the hands.
@@ -31,5 +32,13 @@ void OnDraw(ID3D11DeviceContext* ctx, int pass, unsigned drawNo, unsigned indexC
 
 // From the Present hook (main thread): end of frame bookkeeping, the bone map when due.
 void OnPresent(ID3D11DeviceContext* ctx);
+
+// The Marine's weapon placement as a world -> world move (row vectors, v' = v * m): from the game's weapon model (as
+// last drawn) onto the right controller with the gun offsets, from the controller's current pose -- the same move the
+// drawn weapon gets (GunOnRightController). For shots from the gun (vr/shots.h). False when no first-person weapon was
+// drawn in the last half second or there's no controller pose. Same thread as the game's update (it renders there).
+// placedOrigin (optional) = the placed weapon model's origin (the controller + the gun offsets; at the hand).
+// The weapon = a first-person model whose origin is at one of the game's own hands (props passing close by aren't).
+bool GunPlacement(float m[16], float placedOrigin[3] = nullptr);
 
 } // namespace avp::fp

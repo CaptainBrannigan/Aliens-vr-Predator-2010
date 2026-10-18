@@ -454,6 +454,29 @@ bool HandToWorld(const float pose[3][4], float rot[9], float pos[3])
     return true;
 }
 
+bool WorldToTracking(const float world[3], float tracking[3], float head[3])
+{
+    float frame[9];
+    if (!g_head.valid || !g_haveRefYaw || !aim::PlayerFrame(frame))
+        return false;
+    // HandToWorld backwards: world offset from the game camera -> engine local (frame^T) -> OpenVR (x, -y, -z) ->
+    // the reference yaw put back -> plus the head.
+    float o[3], l[3];
+    for (int i = 0; i < 3; ++i)
+        o[i] = (world[i] - g_base.pos[i]) / dev::kWorldUnitsPerMeter;
+    for (int k = 0; k < 3; ++k)
+        l[k] = frame[0 * 3 + k] * o[0] + frame[1 * 3 + k] * o[1] + frame[2 * 3 + k] * o[2];
+    const float x = l[0], y = -l[1], z = -l[2];
+    const float c = std::cos(-g_refYaw), s = std::sin(-g_refYaw);
+    tracking[0] = x * c - z * s + g_head.m[0][3];
+    tracking[1] = y + g_head.m[1][3];
+    tracking[2] = x * s + z * c + g_head.m[2][3];
+    if (head)
+        for (int i = 0; i < 3; ++i)
+            head[i] = g_head.m[i][3];
+    return true;
+}
+
 void GameCamera(float rot[9], float pos[3])
 {
     std::memcpy(rot, g_base.rot, sizeof(g_base.rot));

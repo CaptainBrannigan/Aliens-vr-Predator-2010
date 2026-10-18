@@ -59,6 +59,11 @@ unsigned long PresentThread();
 // convention); pos = world position. False without a player frame (head aim off) or head pose.
 bool HandToWorld(const float pose[3][4], float rot[9], float pos[3]);
 
+// The inverse for points: a game world position in OpenVR tracking space (metres), as HandToWorld maps them (the head
+// at the game camera's position). head (optional) = the head's position in tracking space. Main thread (the frame's
+// head pose); false as HandToWorld.
+bool WorldToTracking(const float world[3], float tracking[3], float head[3] = nullptr);
+
 // The game's own camera this frame (as its camera apply left it): rotation (columns right, down, forward), position.
 void GameCamera(float rot[9], float pos[3]);
 

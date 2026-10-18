@@ -71,6 +71,14 @@ bool ValidateLookController(uintptr_t object)
            SafeRead32(object + 0x04, &owner) && IsUserPointer(owner);
 }
 
+// A ranged weapon (addresses.h vt_RangedWeapons): the base ctor (007B3D40) always sets bit 0x80 in the flags at +0x80,
+// and each class's ctor a small type number at +0x40 (the factory 007BBB70's cases, 0..0x15).
+bool ValidateRangedWeapon(uintptr_t object)
+{
+    uint32_t type = 0, flags = 0;
+    return SafeRead32(object + 0x40, &type) && type < 0x20 && SafeRead32(object + 0x80, &flags) && (flags & 0x80);
+}
+
 // Logs a candidate's identifying fields the first time it's seen (capped), with the validation verdict.
 void LogCandidateOnce(const char* className, uintptr_t object, bool valid)
 {
@@ -102,6 +110,21 @@ ShadowClass g_classes[] = {
     {"LookController A 00923C88", addr::vt_LookCtrlClassA, &ValidateLookController},
     {"LookController B 009220F8", addr::vt_LookCtrlClassB, &ValidateLookController},
     {"LookController C 00922E40", addr::vt_LookCtrlClassC, &ValidateLookController},
+    // Ranged weapons (vr/controller_aim.cpp replaces GetFireTransform, +0xE4).
+    {"RangedWeapon 00935708", addr::vt_RangedWeapons[0], &ValidateRangedWeapon},
+    {"RangedWeapon 00935820", addr::vt_RangedWeapons[1], &ValidateRangedWeapon},
+    {"RangedWeapon 00935930", addr::vt_RangedWeapons[2], &ValidateRangedWeapon},
+    {"RangedWeapon 00935A58", addr::vt_RangedWeapons[3], &ValidateRangedWeapon},
+    {"RangedWeapon 00935C48", addr::vt_RangedWeapons[4], &ValidateRangedWeapon},
+    {"RangedWeapon 00935D60", addr::vt_RangedWeapons[5], &ValidateRangedWeapon},
+    {"RangedWeapon 00935E90", addr::vt_RangedWeapons[6], &ValidateRangedWeapon},
+    {"RangedWeapon 00935FB0", addr::vt_RangedWeapons[7], &ValidateRangedWeapon},
+    {"RangedWeapon 009360C0", addr::vt_RangedWeapons[8], &ValidateRangedWeapon},
+    {"RangedWeapon 009361F0", addr::vt_RangedWeapons[9], &ValidateRangedWeapon},
+    {"RangedWeapon 00936310", addr::vt_RangedWeapons[10], &ValidateRangedWeapon},
+    {"RangedWeapon 00936418", addr::vt_RangedWeapons[11], &ValidateRangedWeapon},
+    {"RangedWeapon 00936698", addr::vt_RangedWeapons[12], &ValidateRangedWeapon},
+    {"RangedWeapon 009367A8", addr::vt_RangedWeapons[13], &ValidateRangedWeapon},
 };
 constexpr int kClassCount = static_cast<int>(sizeof(g_classes) / sizeof(g_classes[0]));
 

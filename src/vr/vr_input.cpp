@@ -89,12 +89,12 @@ std::string BuildActionManifest()
       "/actions/main": "Gameplay",
       "/actions/main/in/RightHandAim": "Right hand aim - not used yet",
       "/actions/main/in/LeftHandAim": "Left hand aim - not used yet",
-      "/actions/main/in/RightHandPalm": "Right hand palm, bind to Grip - not used yet",
-      "/actions/main/in/LeftHandPalm": "Left hand palm, bind to Grip - not used yet",
+      "/actions/main/in/RightHandPalm": "Right hand palm, bind to Grip: places the hand and the gun",
+      "/actions/main/in/LeftHandPalm": "Left hand palm, bind to Grip: places the hand, two-handed aim",
       "/actions/main/in/TriggerRight": "Gamepad: right trigger RT",
       "/actions/main/in/TriggerLeft": "Gamepad: left trigger LT",
-      "/actions/main/in/GripRight": "Grip - right hand, for melee gestures - not used yet",
-      "/actions/main/in/GripLeft": "Grip - left hand, for melee gestures - not used yet",
+      "/actions/main/in/GripRight": "Grip - right hand, not used yet",
+      "/actions/main/in/GripLeft": "Grip - left hand: hold on the gun for two-handed aim",
       "/actions/main/in/Recenter": "Recenter view",
       "/actions/main/in/Move": "Gamepad: left stick, move",
       "/actions/main/in/Turn": "Gamepad: right stick, look")";
@@ -212,6 +212,8 @@ bool WriteTextFile(const std::string& path, const std::string& text)
 ::vr::VRActionHandle_t g_move = ::vr::k_ulInvalidActionHandle, g_turn = ::vr::k_ulInvalidActionHandle;
 ::vr::VRActionHandle_t g_trigger[2] = {::vr::k_ulInvalidActionHandle, ::vr::k_ulInvalidActionHandle}; // left, right
 ::vr::VRActionHandle_t g_recenter = ::vr::k_ulInvalidActionHandle;
+::vr::VRActionHandle_t g_grip[2] = {::vr::k_ulInvalidActionHandle, ::vr::k_ulInvalidActionHandle}; // left, right
+std::atomic<bool> g_gripHeld[2] = {}; // GripHeld, with hysteresis
 ::vr::VRActionHandle_t g_palm[2] = {::vr::k_ulInvalidActionHandle, ::vr::k_ulInvalidActionHandle}; // left, right
 ::vr::VRActionHandle_t g_aim[2] = {::vr::k_ulInvalidActionHandle, ::vr::k_ulInvalidActionHandle};
 ::vr::ETrackingUniverseOrigin g_universe = ::vr::TrackingUniverseStanding;
@@ -340,6 +342,8 @@ void Init(::vr::IVRInput* input, ::vr::IVRSystem* system, int trackingUniverse)
     g_aim[0] = Handle("/actions/main/in/LeftHandAim");
     g_aim[1] = Handle("/actions/main/in/RightHandAim");
     g_recenter = Handle("/actions/main/in/Recenter");
+    g_grip[0] = Handle("/actions/main/in/GripLeft");
+    g_grip[1] = Handle("/actions/main/in/GripRight");
     for (int i = 0; i < kPadActionCount; ++i)
         g_pad[i] = Handle(PadActionName(kPadActions[i]).c_str());
     g_ready = g_mainSet != ::vr::k_ulInvalidActionSetHandle;
@@ -417,6 +421,14 @@ void Update()
     if (Digital(g_recenter, &recenterChanged) && recenterChanged)
         stereo::RequestRecenter();
 
+    // Grips: held from 0.7, released below 0.4 (analog grips rest a little above 0 and wobble around a half press).
+    for (int h = 0; h < 2; ++h)
+    {
+        const float g = Analog1(g_grip[h]);
+        const bool was = g_gripHeld[h].load(std::memory_order_relaxed);
+        g_gripHeld[h].store(was ? g > 0.4f : g > 0.7f, std::memory_order_relaxed);
+    }
+
     g_moveX.store(mx, std::memory_order_relaxed);
     g_moveY.store(my, std::memory_order_relaxed);
     g_turnX.store(tx, std::memory_order_relaxed);
@@ -446,10 +458,14 @@ void Update()
     }
 }
 
+bool GripHeld(int hand) { return hand >= 0 && hand <= 1 && g_gripHeld[hand].load(std::memory_order_relaxed); }
+
 void Shutdown()
 {
     g_ready = false;
     g_havePad.store(false, std::memory_order_release);
+    g_gripHeld[0].store(false);
+    g_gripHeld[1].store(false);
     AVP_LOG(kLog, "SteamVR Input stopped");
 }
 

@@ -22,6 +22,7 @@
 #include "../hooks/vmt_shadow.h"
 #include "../hooks/xinput_hook.h"
 #include "../vr/head_aim.h"
+#include "../vr/shots.h"
 #include "../vr/stereo.h"
 
 #include <MinHook.h>
@@ -81,6 +82,7 @@ void InitializeMod()
     avp::StartSnapshotThread();
     avp::stereo::Register(); // camera-apply replacement in the shadow vtables (VR eye cameras)
     avp::aim::Register();    // head aim: look controller SetLookDirection -- see avpvr_aim.log
+    avp::shots::Register();  // shots from the gun: the weapons' GetFireTransform -- see avpvr_shots.log
     avp::StartVmtShadow(); // per-object shadow vtables (CEG-safe virtual hooks) -- see avpvr_shadow.log
     avp::StartD3DProbe();  // draw/viewport/present counts from hooks in d3d11/dxgi -- see avpvr_d3d.log
     avp::StartRenderTwiceExperiment();

@@ -42,17 +42,21 @@ verified with a second player). Known issue: the multiplayer pause menu isn't de
 
 **Marine arms on the controllers (v0.15, render only):** the first-person body's bone buffer is rewritten before its
 draw (`src/hooks/first_person.*`): hands on the controllers, two-bone arm IK (joints from a vertex read-back), body
-offset, torso turn, elbow swivel, bone hide; the weapon model on the right controller as a test option (goal 5's arm
-IK, Marine only).
+offset, torso turn, elbow swivel, bone hide; the weapon model on the right controller (goal 5's arm IK, Marine only).
+
+**Marine controller aim (v0.198):** the ranged weapons' GetFireTransform (`+0xE4`, 14 classes) replaced in shadow
+vtables (`src/vr/shots.*`): shots leave the drawn gun along its barrel, the look stays on the head (single player
+and multiplayer verified); shot origin / angle offsets, a laser overlay along the shot line, two-handed aim (left
+grip on the barrel, from the MOHW mod).
 
 ## Next
 
-1. **Controller aim** (goal 4): shots from the weapon / controller while the look stays on the head -- find where a
-   shot takes its direction (the look controller's aim point, character vtable `+0xBC`, or the weapon's own fire
-   code), then holsters (the weapon in whichever hand grips it), the game's arm animation off, melee gestures.
-2. Multiplayer pause menu on the flat screen (from the logged menu state).
-3. **6DoF head position** (goal 3), port `reference/mohw_port/hooks/head_position.*`.
-4. Predator vision / zoom, IK (goals 2, 5).
+1. **6DoF head position** (goal 3), port `reference/mohw_port/hooks/head_position.*`.
+2. **Alien and Predator**: hands / attacks on the controllers (their first-person bodies and attack code).
+3. Holsters (the weapon in whichever hand grips it), per-weapon shot origins, the game's arm animation off, melee
+   gestures.
+4. Multiplayer pause menu on the flat screen (from the logged menu state).
+5. Predator vision / zoom (goal 2).
 
 ## DX9 (AvP.exe)
 

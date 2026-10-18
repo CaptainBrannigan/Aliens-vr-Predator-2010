@@ -417,3 +417,51 @@ Not drawn by: other threads, command lists, indirect draws (all zero in gameplay
 
 **Pause / menus:** `Game_IsPausedWithMenu` (`0080A450`) is true for the in-game pause menu; VR shows those frames
 (and cinematics) on the flat virtual screen, with the game's own aspect.
+
+## 13. Weapons: firing and the shot's transform (2026-10-17, static)
+
+**Character look / aim state** (Marine character vtable `009275E0`, same slots in 11 character classes): `+0xB0`
+GetLookDirection / `+0xB4` SetLookDirection = `char+0x50..0x58`; `+0xB8` GetAimPoint / `+0xBC` SetAimPoint =
+`char+0x5C..0x64` (when `[[char+0x24]+0x9C]` exists the four go through it instead: `006F1F50` / `006F1F90` /
+`006F19A0` / `006F1A80`, likely the network-driven path). The look controller's SetLookDirection (`006AC1E0`) sets
+both: the look, then the aim point = eye + look x the distance of a raycast from the eye (`0051B900`).
+`00701240` blends the aim point toward scripted targets (four modes, `char+0x1E0..`) -- AI / scripted look-at.
+
+**Ranged weapons:** base "Ranged Weapon" (ctor `007B3D40`, vtable `00935E90`, flags `+0x80` |= 0x80), one class per
+type (factory `007BBB70`, type number at `+0x40`): 14 vtables (addresses.h `vt_RangedWeapons`).
+- **Fire** (`+0xF4`, `007B1060`; `007B46A0` for `009360C0`): for each barrel (`+0x1C` array, count `+0x90 & 0xF`)
+  with ammo, `007AF9E0(barrel)`, then `007A2DD0(1, 0)`.
+- `007AF9E0`: `weapon->GetFireTransform(+0xE4)`, then `00641530(orientation, dir)` turns the direction into an
+  orientation, and `[weapon+0xD0]->007B8A00(1, character, ?, pos, orientation, barrel)` -> `007B7CD0` spawns up to
+  three shot entities (`00603A50(pos, orientation, ...)`). **Only the returned position and direction reach the shot.**
+- **GetFireTransform** (`+0xE4`): thiscall(weapon; character, muzzleHash, `*(ammo+0xA4)` (float), range (float),
+  outPos[3], outDir[3], outMat[9], outDist, outTarget), RET 0x24 (call site `007AFAB5`). `007B3110` (12 classes):
+  position + matrix from the character's attachment `muzzleHash` (`005DC920` on `char+4+vbase+0x68`, falling back to
+  the character's position / body matrix); for the player (character flag `+0x160` bit 4 clear) direction = the
+  character's **look** (`+0xB0`), or the muzzle axis when `weapon+0xCC` bit 2 is set; outDist = |aim point - muzzle|.
+  AI characters aim at their target instead (`007A9B00` / `007A8F30`). `007B4CC0` (vtable `009361F0`): the same with
+  a cached transform at `+0x118..`. `007AB1E0` (vtable `00935930`, type 6): direction = the muzzle matrix's column 2.
+- Other `+0xE4` callers with the full argument list: `007B2460` (a second fire path, unread).
+
+**Shots from the gun (`src/vr/shots.*`):** `+0xE4` replaced in the 14 classes' shadow vtables; after the original,
+for the local player's character (Marine, setting on) the line is put on the drawn gun: origin = the placed weapon
+model's origin + the shot origin offsets (gun frame), direction = the game's through the placement + the shot angle
+offsets (`fp::GunPlacement`). **Live 2026-10-17 (pistol = type 0, base class `00935E90`): shots follow the
+controller** (walls). The game's own direction is the look to within 0.6 deg (camera frame (-0.01, -0.01, 1.00)); its
+muzzle attachment sits near the hand (mapped through the placement it came out at the hand, not the barrel), hence
+the origin offsets. A laser (`src/vr/laser.*`, SteamVR overlay as in the MOHW mod, fixed 30 m, no hit test) shows
+the same line. **Multiplayer: shots from the gun work too** (user-verified 2026-10-17), so a client's shot line
+reaches the game the same way. Tuned for the pistol: origin right -0.7, up 11, forward 12 cm; pitch +3.5, yaw -1.75
+deg. Two-handed aim (MOHW port): the left grip held with the left palm within 15 cm of the barrel line (5-80 cm along
+it) turns the gun frame (`PlacedGunWorld`) to aim at the palm, keeping the right hand's up. Open: the second fire
+path, projectile weapons, the Smartgun's targeting.
+
+**Raycast (static, unused yet):** `0051B900` = ray init, thiscall(ray; origin*, dir*, ignore entity handle, length
+(float)), RET 0x10 (sets `[9]` ignore, `[10]` length, `[11]` 0, `[12]` 8, `[13]` -1); `0080CBD0(ray, 8, 00920EB8, 0,
+0)` cdecl casts it and returns the static result `00A71D40` whose first float is the hit distance. SetLookDirection
+uses it with the character's handle (`char + vbase + 8`) and range `[009AAA18]`.
+
+**First-person weapon vs props:** the mesh-queue pass draws world props with the same skinned path, so "any
+first-person model that isn't the body" also caught props passing within 1.5 m (a billboard, a light fixture snapped
+to the hand, user-seen). The weapon is now a first-person model whose origin is within 0.35 m of the game's own hand
+centre (the pistol: 0.09 m), and the body, once its bone map found both arms' joints, is kept while it's drawn.
