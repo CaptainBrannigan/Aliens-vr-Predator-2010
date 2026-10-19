@@ -101,7 +101,7 @@ shot values also **per weapon**; rows that don't apply to the species you're pla
   triggers), not your hand movements.
 - **As the Alien, some distant things shift slightly against your head movement** (for example the view through
   windows), while nearby walls and characters stay put. Being investigated.
-- **Multiplayer** works for you, but hasn't been tested with a second player: what others see of your head-driven
+- **Multiplayer** works a solo survival multiplayer gamemode, but hasn't been tested with a second player: what others see of your head-driven
   look and aim isn't verified.
 - Predator vision modes and zoom haven't been checked in VR.
 - The laser sight shows through walls (no hit test).
