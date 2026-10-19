@@ -99,6 +99,7 @@
     <ClCompile Include="core\settings.cpp" />
     <ClCompile Include="hooks\render_twice_experiment.cpp" />
     <ClCompile Include="hooks\vmt_shadow.cpp" />
+    <ClCompile Include="hooks\screen_warp.cpp" />
     <ClCompile Include="hooks\two_view_experiment.cpp" />
     <ClCompile Include="..\third_party\minhook\src\buffer.c" />
     <ClCompile Include="..\third_party\minhook\src\hook.c" />
@@ -130,6 +131,7 @@
     <ClInclude Include="hooks\hud_passes.h" />
     <ClInclude Include="hooks\render_twice_experiment.h" />
     <ClInclude Include="hooks\vmt_shadow.h" />
+    <ClInclude Include="hooks\screen_warp.h" />
     <ClInclude Include="hooks\two_view_experiment.h" />
   </ItemGroup>
   <ItemGroup>

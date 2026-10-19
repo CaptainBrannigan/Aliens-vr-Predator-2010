@@ -12,6 +12,7 @@
 #include <d3d11.h>
 #include <intrin.h>
 
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -432,9 +433,65 @@ bool HandCentreModel(const float* buffer, const ArmRig& r, float p[3])
 // The share of the hand's roll (about the forearm) that the forearm twist bone at the wrist takes.
 constexpr float kForeTwistShare = 0.5f;
 
+// ---- The game's hand animation layered on the controllers (2026-10-18) ----
+// The hands on the controllers hid the animations (the Predator's attacks, the Marine's reloads). The turning was
+// carried already (a hand keeps the angle to its controller that it had to the camera); this carries the movement too:
+// the game hand's centre in the game camera's space minus its rest there -- that position followed slowly
+// (kLayerFollowSeconds), so quick movement (attacks, recoil, reloads) shows and slow drift (a new weapon's pose, the view
+// pitching) settles back onto the controller -- turned into the controller's frame and added to its target. The Marine's
+// gun takes the right hand's, so the hand stays on it (PlacedGunWorld). User-verified with the Predator's attacks
+// (first as a timed window after RB / LB; since then all the time, for both classes). Setting LayerAnimation.
+constexpr float kLayerFollowSeconds = 1.0f;
+constexpr DWORD kLayerGapMs = 500; // no body draw for this long (menus, loading): the rest starts afresh
+struct LayerHand
+{
+    bool have = false;
+    float rest[3] = {};  // game camera space
+    float world[3] = {}; // the latest movement added, world (for the gun)
+    DWORD tick = 0;
+};
+LayerHand g_layer[2];
+bool g_bodySecondRender = false; // the body draw being placed is the right eye's (StartModel): the rest isn't stepped
+
+// The movement to add to a hand's controller target (world), from the game's own hand centre (g_gameHand, before
+// the body offset: that moves with the view's pitch).
+void LayerMove(int hand, const float camRot[9], const float camPos[3], const float ctrlRot[9], float out[3])
+{
+    LayerHand& l = g_layer[hand];
+    if (!settings::LayerAnimation())
+    {
+        out[0] = out[1] = out[2] = 0.0f;
+        l.have = false; // the gun takes none either; on again, the rest starts afresh
+        return;
+    }
+    float rel[3], q[3];
+    Sub3(g_gameHand[hand], camPos, rel);
+    VecTimes(rel, camRot, q); // game camera space (camRot's columns: the camera's right, down, forward)
+    const DWORD now = GetTickCount();
+    if (!g_bodySecondRender)
+    {
+        if (!l.have || now - l.tick > kLayerGapMs)
+        {
+            std::memcpy(l.rest, q, sizeof(q));
+            l.have = true;
+        }
+        else
+        {
+            const float a = 1.0f - std::exp(-static_cast<float>(now - l.tick) * 0.001f / kLayerFollowSeconds);
+            for (int k = 0; k < 3; ++k)
+                l.rest[k] += (q[k] - l.rest[k]) * a;
+        }
+        l.tick = now;
+    }
+    const float d[3] = {q[0] - l.rest[0], q[1] - l.rest[1], q[2] - l.rest[2]};
+    for (int k = 0; k < 3; ++k)
+        out[k] = d[0] * ctrlRot[k * 3 + 0] + d[1] * ctrlRot[k * 3 + 1] + d[2] * ctrlRot[k * 3 + 2];
+    std::memcpy(l.world, out, sizeof(l.world));
+}
+
 // One arm onto its controller. The hand (bones handFirst..handLast) moves rigidly so its centre -- the hand bones'
-// bind-space centroids under their current matrices -- sits on the controller, turned so it keeps the angle to the
-// controller that it had to the game camera. Then two-bone IK: the shoulder stays, the upper arm and forearm turn
+// bind-space centroids under their current matrices -- sits on the controller (plus the animation's movement,
+// LayerMove), turned so it keeps the angle to the controller that it had to the game camera. Then two-bone IK: the shoulder stays, the upper arm and forearm turn
 // about the shoulder and elbow so the wrist meets the hand; the elbow goes where the forearm would continue straight
 // back from the hand (the game's wrist angle), on the circle the two lengths allow. Past full reach the arm is straight
 // and the shoulder follows the hand. The forearm twist bone takes part of the hand's roll. Without joints from the
@@ -484,6 +541,10 @@ bool ArmToController(float* buffer, int hand, const ArmRig& r)
     for (int k = 0; k < 3; ++k)
         t[12 + k] = ctrlPos[k] - (pw[0] * t[0 * 4 + k] + pw[1] * t[1 * 4 + k] + pw[2] * t[2 * 4 + k]);
     t[15] = 1.0f;
+    float layer[3];
+    LayerMove(hand, camRot, camPos, ctrlRot, layer);
+    for (int k = 0; k < 3; ++k)
+        t[12 + k] += layer[k];
     // Two-handed (the Marine's gun aimed by both hands): the weapon hand (right) stays on its controller, turned with
     // the gun by the two-handed aim (about the gun's origin), so it keeps holding it; the off hand takes the same move,
     // so it keeps exactly the game's own offset from the weapon hand (its grip on the gun, also through reloads), and
@@ -680,36 +741,54 @@ bool LeftPalmWorld(float pos[3])
     return input::GetHandPose(0, true, pose) && stereo::HandToWorld(pose, rot, pos);
 }
 
+// The left palm is in the two-handed grab zone (or holds the gun): the left grip -- also the left bumper -- is the
+// grab there, not LB (xinput_hook.cpp). Main thread writes, the XInput hook reads.
+std::atomic<bool> g_leftGripOnGun{false};
+
 void UpdateTwoHanded()
 {
-    if (!settings::TwoHandedAim() || !settings::GunOnRightController() || Global<int>(addr::g_PlayerSpecies) != 2 ||
-        !input::GripHeld(0))
+    const bool available =
+        settings::TwoHandedAim() && settings::GunOnRightController() && Global<int>(addr::g_PlayerSpecies) == 2;
+    // Where the left palm is along / off the barrel (every frame: the bumper suppression needs it before a grab).
+    float along = 0.0f, dist = 0.0f;
+    bool inZone = false;
+    if (available)
+    {
+        float off[3], angles[3], rot[9], pos[3], palm[3], radius, reach, grip[2];
+        settings::GunOffset(off, angles);
+        settings::TwoHandParams(&radius, &reach, grip);
+        if (ControllerWorld(1, off, angles, rot, pos) && LeftPalmWorld(palm))
+        {
+            const float fwd[3] = {rot[2], rot[5], rot[8]};
+            float to[3], perp[3];
+            Sub3(palm, pos, to);
+            along = Dot3(to, fwd);
+            for (int k = 0; k < 3; ++k)
+                perp[k] = to[k] - fwd[k] * along;
+            dist = Len3(perp);
+            inZone = along >= 0.05f && along <= reach && dist <= radius;
+        }
+    }
+    if (!available || !input::GripHeld(0))
     {
         if (g_twoHanded)
             AVP_LOG(kLog, "two-handed aim off");
         g_twoHanded = false;
+        g_leftGripOnGun.store(inZone, std::memory_order_relaxed);
         return;
     }
+    g_leftGripOnGun.store(inZone || g_twoHanded, std::memory_order_relaxed);
     if (g_twoHanded)
         return;
-    float off[3], angles[3], rot[9], pos[3], palm[3], radius, reach, grip[2];
-    settings::GunOffset(off, angles);
-    settings::TwoHandParams(&radius, &reach, grip);
-    if (!ControllerWorld(1, off, angles, rot, pos) || !LeftPalmWorld(palm))
-        return;
-    const float fwd[3] = {rot[2], rot[5], rot[8]};
-    float to[3], perp[3];
-    Sub3(palm, pos, to);
-    const float along = Dot3(to, fwd);
-    for (int k = 0; k < 3; ++k)
-        perp[k] = to[k] - fwd[k] * along;
-    const float dist = Len3(perp);
-    if (along >= 0.05f && along <= reach && dist <= radius)
+    if (inZone)
     {
         g_twoHanded = true;
+        g_leftGripOnGun.store(true, std::memory_order_relaxed);
         AVP_LOG(kLog, "two-handed aim ON (left palm %.2f m along the barrel, %.2f m off it)", along, dist);
         return;
     }
+    float radius, reach, grip[2];
+    settings::TwoHandParams(&radius, &reach, grip);
     static DWORD lastMiss = 0;
     if (GetTickCount() - lastMiss > 1000)
     {
@@ -807,8 +886,11 @@ bool PlacedGunWorld(const float w[16], float nw[16])
             nw[i * 4 + j] = ctrlRot[j * 3 + 0] * local[0] + ctrlRot[j * 3 + 1] * local[1] + ctrlRot[j * 3 + 2] * local[2];
         nw[i * 4 + 3] = 0.0f;
     }
+    // The right hand's animation movement (LayerMove), so the hand stays on the gun; the shots follow the drawn gun.
+    const LayerHand& layer = g_layer[1];
+    const bool layered = settings::ArmsFollowControllers() && layer.have && GetTickCount() - layer.tick < kLayerGapMs;
     for (int j = 0; j < 3; ++j)
-        nw[12 + j] = ctrlPos[j]; // the offsets are in ctrlPos / ctrlRot already
+        nw[12 + j] = ctrlPos[j] + (layered ? layer.world[j] : 0.0f); // the offsets are in ctrlPos / ctrlRot already
     nw[15] = 1.0f;
     return true;
 }
@@ -1067,6 +1149,7 @@ void StartModel(ID3D11DeviceContext* c, ID3D11Buffer* vb, bool secondRender)
             if (Global<int>(addr::g_PlayerSpecies) == 2)
                 changed = TurnTorso(copy) || changed; // the Marine's bones (its idle pose holds the left shoulder forward)
             g_haveRightHandMove = false;
+            g_bodySecondRender = secondRender;
             changed = ArmToController(copy, 1, arms[1]) || changed; // the weapon hand first (two-handed: the off
             changed = ArmToController(copy, 0, arms[0]) || changed; // hand takes its move)
         }
@@ -1500,6 +1583,7 @@ void OnPresent(ID3D11DeviceContext* ctx)
         g_haveCentroids = false; // the bone map's centroids and joints are the previous body's
         g_haveJoints[0] = g_haveJoints[1] = false;
         g_bodyForwardSign = 0.0f;
+        g_layer[0].have = g_layer[1].have = false; // its hands' rest is the new body's
     }
     g_frameModelCount = 0;
     g_modelVB = nullptr;
@@ -1525,5 +1609,7 @@ bool GunPlacement(float m[16], float placedOrigin[3])
         std::memcpy(placedOrigin, nw + 12, 3 * sizeof(float));
     return true;
 }
+
+bool LeftGripOnGun() { return g_leftGripOnGun.load(std::memory_order_relaxed); }
 
 } // namespace avp::fp

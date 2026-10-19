@@ -192,30 +192,40 @@ void TrackingToWorld(const float frame[9], float vx, float vy, float vz, float o
         out[i] = frame[i * 3 + 0] * l[0] + frame[i * 3 + 1] * l[1] + frame[i * 3 + 2] * l[2];
 }
 
-// ---- Head position (settings HeadPosition, RoomScaleMove) ----
+// ---- Head position (settings HeadPosition, RoomScaleStep*) ----
 // The play space is anchored in the world: the real head is at headWorld = anchor + map(head - recentred head), map =
 // TrackingToWorld. The residual r = headWorld - the game camera (the character's eye) is split along the body's up:
-// - Across (walking, leaning): with RoomScaleMove the character WALKS after the head -- left-stick input
-//   (input::SetMoveAssist) toward r while the player's own stick is idle, so the game's own collision and movement
-//   (and multiplayer, which replicates the input) apply. The view runs ahead of the character by at most HeadLeadCm
-//   (inside its collision capsule, so it can't see through walls). Past kMaxResidual (blocked by a wall, knocked back)
-//   the anchor slides: the play space moves rather than the character being pulled back. The player's own stick moves
-//   the anchor with the character (artificial locomotion carries the play space). Without RoomScaleMove: view only,
-//   as in the MOHW mod (the anchor always travels with the character; up to kMaxViewOnly).
+// - Across (walking, leaning): the eyes follow the head. With RoomScaleStep, once the head is RoomScaleStepDistance
+//   off, the character STEPS under it -- left-stick input (input::SetMoveAssist) while the player's own stick is idle,
+//   so the game's own collision and movement (and multiplayer, which replicates the input) apply -- and stops there;
+//   it steps again only once the head is that far off again. The view runs ahead of the character by at most the step
+//   distance + kLeadMargin (inside its collision capsule, so it can't see through walls); past that + kSlideMargin
+//   (blocked by a wall, knocked back) the anchor slides: the play space moves rather than the character being pulled
+//   back. The player's own stick moves the anchor with the character (artificial locomotion carries the play space),
+//   and so does the coast after it, until the character has stopped. Without RoomScaleStep: view only, as in the MOHW
+//   mod (the anchor always travels with the character; up to kMaxViewOnly).
 // - Up and down (crouching, standing): view only, up to kMaxVertical.
 // Turning (the player frame turns: stick turn, Alien surfaces) pivots the play space about the head, so it doesn't
-// start a walk. The hands are measured from the eye (g_eyeOffset), so they stay with the real head.
-constexpr float kMaxResidual = 0.5f;  // metres across, room-scale
+// start a step. The hands are measured from the eye (g_eyeOffset), so they stay with the real head.
+//
+// 2026-10-17's first room-scale walk circled the spot after the player's own stick input, worse with a faster step:
+// the anchor stopped travelling the moment the stick was let go, the character's coast then counted as residual and
+// started a walk back (a 10 cm start), which overshot and started again. Now the coast is carried, a step only starts
+// past the step distance (30 cm default), stops once it arrives (aimed at where the coast will end), and an overshoot
+// stays as view offset instead of starting another walk; a step that makes no progress (a wall) gives up.
+constexpr float kLeadMargin = 0.10f;  // metres the view may lead the character past the step distance
+constexpr float kSlideMargin = 0.15f; // ... and past that the play space slides
 constexpr float kMaxViewOnly = 1.5f;  // metres across, view only
 constexpr float kMaxVertical = 0.6f;  // metres up / down
-constexpr float kFollowStart = 0.10f; // the walk starts past this ...
-constexpr float kFollowStop = 0.04f;  // ... and stops inside this
-constexpr float kFollowGain = 1.0f;   // stick per metre of residual, on top of RoomScaleStick
-constexpr float kCoastSeconds = 0.25f;     // how far ahead the walk aims: the character coasts after the stick lets go
-constexpr float kStoppedSpeed = 0.2f;      // m/s: the walk is over once inside kFollowStop and this slow
+constexpr float kFollowStop = 0.04f;  // a step is over once it arrives inside this
+constexpr float kFollowGain = 1.0f;   // stick per metre of residual, on top of RoomScaleStepSpeed
+constexpr float kCoastSeconds = 0.25f;     // how far ahead the step aims: the character coasts after the stick lets go
+constexpr float kStoppedSpeed = 0.2f;      // m/s: the character has stopped (the coast after the player's stick is over)
 constexpr float kVelocitySmoothing = 0.3f; // per frame
 constexpr float kUserStickActive = 0.15f;
-constexpr float kTeleport = 2.0f; // metres in one frame: respawn / teleport, re-anchor
+constexpr float kTeleport = 2.0f;           // metres in one frame: respawn / teleport, re-anchor
+constexpr DWORD kStepNoProgressMs = 600;    // a step whose residual hasn't shrunk by kStepProgress for this long ...
+constexpr float kStepProgress = 0.02f;      // ... gives up (blocked) until the head comes back within the step distance
 
 float g_eyeOffset[3] = {}; // this frame: the eyes' offset from the game camera (world)
 float g_anchor[3] = {};
@@ -223,14 +233,18 @@ bool g_haveAnchor = false;
 unsigned g_anchorRecenter = 0;
 float g_lastFrame[9] = {};
 float g_lastBase[3] = {};
-bool g_following = false;
-float g_velocity[3] = {}; // the character's speed across (world units / s, smoothed)
+bool g_following = false;  // a step is under way
+bool g_coasting = false;   // the player's stick was let go, the character is still moving: the anchor still travels
+bool g_stepBlocked = false; // the last step gave up: none until the head is back within the step distance
+float g_stepBest = 0.0f;   // the step's smallest residual so far (m) ...
+DWORD g_stepBestTick = 0;  // ... and when
+float g_velocity[3] = {};  // the character's speed across (world units / s, smoothed)
 
 void HeadPositionOff()
 {
     g_eyeOffset[0] = g_eyeOffset[1] = g_eyeOffset[2] = 0.0f;
     g_haveAnchor = false;
-    g_following = false;
+    g_following = g_coasting = g_stepBlocked = false;
     g_velocity[0] = g_velocity[1] = g_velocity[2] = 0.0f;
     input::SetMoveAssist(0.0f, 0.0f);
 }
@@ -244,7 +258,8 @@ void UpdateHeadPosition()
         HeadPositionOff();
         return;
     }
-    const bool roomScale = dev::kRoomScaleMove;
+    const bool roomScale = settings::RoomScaleStep();
+    const float stepAt = settings::RoomScaleStepDistance();
     const float rel[3] = {g_head.m[0][3] - g_refHeadPos[0], g_head.m[1][3] - g_refHeadPos[1],
                           g_head.m[2][3] - g_refHeadPos[2]};
     float mapped[3];
@@ -258,6 +273,13 @@ void UpdateHeadPosition()
     const float down[3] = {frame[1], frame[4], frame[7]}; // the body's down
     float moved[3] = {base[0] - g_lastBase[0], base[1] - g_lastBase[1], base[2] - g_lastBase[2]};
     const float movedLen = std::sqrt(moved[0] * moved[0] + moved[1] * moved[1] + moved[2] * moved[2]);
+    // The player's own locomotion and its coast: until the character has stopped (last frame's speed).
+    const float speedBefore = std::sqrt(g_velocity[0] * g_velocity[0] + g_velocity[1] * g_velocity[1] +
+                                        g_velocity[2] * g_velocity[2]) / dev::kWorldUnitsPerMeter;
+    if (userMoving)
+        g_coasting = true;
+    else if (g_coasting && speedBefore < kStoppedSpeed)
+        g_coasting = false;
     if (g_haveAnchor && movedLen > kTeleport * dev::kWorldUnitsPerMeter)
     {
         AVP_LOG(kLog, "head position: the character jumped %.1f m in a frame (respawn, teleport): re-anchored",
@@ -270,7 +292,7 @@ void UpdateHeadPosition()
             g_anchor[i] = base[i] - mapped[i]; // the head on the eye
         g_haveAnchor = true;
         g_anchorRecenter = g_recenterCount;
-        g_following = false;
+        g_following = g_stepBlocked = false;
     }
     else
     {
@@ -280,9 +302,9 @@ void UpdateHeadPosition()
         for (int i = 0; i < 3; ++i)
             g_anchor[i] += (mappedOld[i] - mapped[i]) * dev::kWorldUnitsPerMeter;
         // The character's movement up and down (jumps, stairs, lifts) always carries the play space; across, only the
-        // player's own locomotion does (or everything, view only) -- the walk after the head mustn't.
+        // player's own locomotion and its coast do (or everything, view only) -- the step after the head mustn't.
         const float dv = moved[0] * down[0] + moved[1] * down[1] + moved[2] * down[2];
-        const bool across = !roomScale || userMoving;
+        const bool across = !roomScale || g_coasting;
         for (int i = 0; i < 3; ++i)
             g_anchor[i] += across ? moved[i] : down[i] * dv;
     }
@@ -295,7 +317,8 @@ void UpdateHeadPosition()
     const float v = r[0] * down[0] + r[1] * down[1] + r[2] * down[2];
     float h[3] = {r[0] - down[0] * v, r[1] - down[1] * v, r[2] - down[2] * v};
     float len = std::sqrt(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]);
-    const float maxAcross = (roomScale ? kMaxResidual : kMaxViewOnly) * dev::kWorldUnitsPerMeter;
+    const float leadM = stepAt + kLeadMargin;
+    const float maxAcross = (roomScale ? leadM + kSlideMargin : kMaxViewOnly) * dev::kWorldUnitsPerMeter;
     if (len > maxAcross)
     {
         const float k = maxAcross / len;
@@ -307,7 +330,7 @@ void UpdateHeadPosition()
         len = maxAcross;
     }
 
-    // The character's speed across (smoothed), for the walk's braking.
+    // The character's speed across (smoothed), for the step's braking.
     LARGE_INTEGER qpc, freq;
     QueryPerformanceCounter(&qpc);
     QueryPerformanceFrequency(&freq);
@@ -325,25 +348,45 @@ void UpdateHeadPosition()
     const float speed = std::sqrt(g_velocity[0] * g_velocity[0] + g_velocity[1] * g_velocity[1] +
                                   g_velocity[2] * g_velocity[2]) / dev::kWorldUnitsPerMeter;
 
-    // The walk after the head, aimed where the head will be once the character has coasted (kCoastSeconds at its
-    // speed): that releases the stick in time to stop on it, and steers out sideways drift -- without it the fast
-    // species overshot and circled the spot (2026-10-17). Stick axes = the game camera's right / forward made level
-    // (the move stick goes where the view looks).
+    // The step after the head, aimed where the head will be once the character has coasted (kCoastSeconds at its
+    // speed): that releases the stick in time to stop on it, and steers out sideways drift. Stick axes = the game
+    // camera's right / forward made level (the move stick goes where the view looks).
     float ax = 0.0f, ay = 0.0f;
-    if (roomScale && !userMoving)
+    const float lenM = len / dev::kWorldUnitsPerMeter;
+    const DWORD now = GetTickCount();
+    if (lenM < stepAt)
+        g_stepBlocked = false; // the head came back: steps may start again
+    if (roomScale && !userMoving && !g_coasting)
     {
-        const float lenM = len / dev::kWorldUnitsPerMeter;
-        if (lenM > kFollowStart)
+        if (!g_following && !g_stepBlocked && lenM > stepAt)
+        {
             g_following = true;
-        else if (lenM < kFollowStop && speed < kStoppedSpeed)
-            g_following = false;
+            g_stepBest = lenM;
+            g_stepBestTick = now;
+        }
         float pred[3];
         for (int i = 0; i < 3; ++i)
             pred[i] = h[i] - g_velocity[i] * kCoastSeconds;
         const float predLen = std::sqrt(pred[0] * pred[0] + pred[1] * pred[1] + pred[2] * pred[2]);
         const float predM = predLen / dev::kWorldUnitsPerMeter;
         const bool arriving = predM < kFollowStop || pred[0] * h[0] + pred[1] * h[1] + pred[2] * h[2] <= 0.0f;
-        if (g_following && !arriving && predLen > 1e-6f)
+        if (g_following)
+        {
+            if (lenM < g_stepBest - kStepProgress)
+            {
+                g_stepBest = lenM;
+                g_stepBestTick = now;
+            }
+            if (arriving)
+                g_following = false; // arrived: what's left stays as view offset
+            else if (now - g_stepBestTick > kStepNoProgressMs)
+            {
+                g_following = false;
+                g_stepBlocked = true;
+                AVP_LOG(kLog, "head position: the step made no progress (blocked) at %.2f m: stopped", lenM);
+            }
+        }
+        if (g_following && predLen > 1e-6f)
         {
             float right[3] = {g_base.rot[0], g_base.rot[3], g_base.rot[6]};
             float fwd[3] = {g_base.rot[2], g_base.rot[5], g_base.rot[8]};
@@ -358,7 +401,7 @@ void UpdateHeadPosition()
             const float fl = std::sqrt(fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]);
             if (rl > 1e-4f && fl > 1e-4f)
             {
-                float m = dev::kRoomScaleStick + (predM - kFollowStop) * kFollowGain;
+                float m = settings::RoomScaleStepSpeed() + (predM - kFollowStop) * kFollowGain;
                 m = m > 1.0f ? 1.0f : m;
                 ax = (pred[0] * right[0] + pred[1] * right[1] + pred[2] * right[2]) / (rl * predLen) * m;
                 ay = (pred[0] * fwd[0] + pred[1] * fwd[1] + pred[2] * fwd[2]) / (fl * predLen) * m;
@@ -371,7 +414,7 @@ void UpdateHeadPosition()
 
     // The eyes: across, ahead of the character by at most the lead (room-scale) or the whole residual (view only);
     // up and down as the head.
-    const float lead = roomScale ? dev::kHeadLeadMeters * dev::kWorldUnitsPerMeter : maxAcross;
+    const float lead = roomScale ? leadM * dev::kWorldUnitsPerMeter : maxAcross;
     const float k = len > lead && len > 1e-6f ? lead / len : 1.0f;
     const float vMax = kMaxVertical * dev::kWorldUnitsPerMeter;
     const float vc = v > vMax ? vMax : v < -vMax ? -vMax : v;
@@ -379,14 +422,20 @@ void UpdateHeadPosition()
         g_eyeOffset[i] = h[i] * k + down[i] * vc;
 
     static DWORD lastLog = 0;
-    if (GetTickCount() - lastLog > 2000)
+    static bool wasFollowing = false;
+    if (now - lastLog > 2000 || g_following != wasFollowing)
     {
-        lastLog = GetTickCount();
+        lastLog = now;
+        wasFollowing = g_following;
         AVP_LOG(kLog,
                 "head position: residual across %.2f m, up/down %.2f m, speed %.2f m/s, %s, stick assist (%.2f %.2f)%s",
-                len / dev::kWorldUnitsPerMeter, -v / dev::kWorldUnitsPerMeter, speed,
-                roomScale ? (g_following ? "walking after the head" : "room-scale") : "view only", ax, ay,
-                userMoving ? ", player's stick" : "");
+                lenM, -v / dev::kWorldUnitsPerMeter, speed,
+                !roomScale        ? "view only"
+                : g_following     ? "stepping under the head"
+                : g_stepBlocked   ? "room-scale (last step blocked)"
+                : g_coasting      ? "room-scale (coasting after the stick)"
+                                  : "room-scale",
+                ax, ay, userMoving ? ", player's stick" : "");
     }
 }
 

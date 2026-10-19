@@ -33,7 +33,7 @@ build verification, log-only trace hooks, game-state snapshots; the Steam CEG co
   hidden; pause menu, cutscenes, movies and loading on a flat virtual screen.
 
 **Goal 4 — motion controls (pad and head aim done):** SteamVR Input actions -> virtual XInput pad 0 (hook inside
-xinput1_3.dll), generated manifest + Touch bindings; Quest 3 thumbrests = bumpers, Start = held right thumbrest.
+xinput1_3.dll), generated manifest + Touch bindings; grips = bumpers, held left / right thumbrest = Back / Start, both thumbrests = recenter (Beta).
 Head aim for all species through the look controller's SetLookDirection (`src/vr/head_aim.*`): a player frame
 (body vertical + own heading, right-stick turning), per-species aim offsets, local player only.
 
@@ -57,7 +57,9 @@ grip on the barrel, from the MOHW mod).
    the play space slides; the player's own stick, jumps, stairs and lifts carry the play space; turns pivot about the
    head; up and down is view only. Live: works for the Marine; the fast Alien / Predator overshot and circled the
    spot (stronger stick = wider circles) -- the walk now aims where the head will be after a 0.25 s coast (braking,
-   and sideways drift steered out). Retest.
+   and sideways drift steered out). Beta: reworked (vr/stereo.cpp) -- a step only past RoomScaleStepCm, stops on arrival
+   (an overshoot stays as view offset), gives up when blocked, and the coast after the player's own stick is carried
+   (that coast had started the circling walk back). Step speed capped at 0.5 (higher jittered settling).
 2. **Alien and Predator**: hands / attacks on the controllers (their first-person bodies and attack code).
 3. Holsters (the weapon in whichever hand grips it), the game's arm animation off, melee gestures. (Per-weapon gun
    and shot values: after v0.198, keyed by the drawn gun's mesh; pistol and pulse rifle identified.)

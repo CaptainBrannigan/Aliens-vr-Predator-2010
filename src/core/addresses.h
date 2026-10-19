@@ -104,6 +104,14 @@ constexpr uintptr_t vt_RangedWeapons[] = {0x00935708, 0x00935820, 0x00935930, 0x
                                           0x00935D60, 0x00935E90, 0x00935FB0, 0x009360C0, 0x009361F0,
                                           0x00936310, 0x00936418, 0x00936698, 0x009367A8};
 
+// ---- Screen warp effect (2026-10-18; FINDINGS section 13) ----
+// A full-screen displacement: the scene re-sampled through a displacement texture (PS blob 0094A390, created by
+// 0081FE70 into 00A7222C, its g_fIntensity cbuffer 00A72230). Class vtable 00933578 (ctor 00798AF0): +0x04 = 0x7F,
+// +0x08 its name (string: ptr, len, cap), +0x18 the displacement texture (-2 = none), +0x1C the intensity. Slot +0x08
+// draws it: thiscall(effect, float amount), RET 4 -- skipped when amount is 0; intensity = +0x1C * amount * 009AA9D0.
+constexpr uintptr_t vt_ScreenWarp                = 0x00933578;
+constexpr uintptr_t ScreenWarp_Draw              = 0x0081FEB0;
+
 // ---- Input ----
 constexpr uintptr_t Input_GetActionValue         = 0x0060DED0;
 constexpr uintptr_t Input_ConsumeAction          = 0x0060DF40;

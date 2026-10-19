@@ -31,9 +31,11 @@ struct PadAction
     const char* defaultInput; // "click", "double" (double press), "long" (long press), "touch"
     unsigned holdMs = 0;      // > 0: the pad button only once the action has been held this long (timed here)
 };
-// Start on a held right thumbrest (2026-10-17, replacing MOHW's long Y): the thumbrest is touch-only and SteamVR's
-// long press needs a click, so the hold is timed here. The same touch is also RB, held meanwhile.
+// Start / Back on a held right / left thumbrest (2026-10-17 Start, replacing MOHW's long Y; 2026-10-18 Back): the
+// thumbrest is touch-only and SteamVR's long press needs a click, so the hold is timed here. Both thumbrests touched
+// together recenter instead (Update). The bumpers are the grips (2026-10-18; they were the thumbrests' touch).
 constexpr unsigned kStartHoldMs = 800;
+constexpr ULONGLONG kBothRestsMs = 300; // both thumbrests touched within this of each other = together
 const PadAction kPadActions[] = {
     {"A", "A", 0x1000, "/user/hand/right/input/a", "button", "click"},
     {"B", "B", 0x2000, "/user/hand/right/input/b", "button", "click"},
@@ -49,13 +51,20 @@ const PadAction kPadActions[] = {
     {"StartHold", "Start / pause (hold 0.8 s)", 0x0010, "/user/hand/right/input/thumbrest", "button", "touch",
      kStartHoldMs},
     {"Back", "Back", 0x0020, nullptr, nullptr, nullptr},
-    // The Touch (Quest 3: Touch Plus) thumbrest is capacitive only: touching it holds the bumper.
-    {"LB", "Left bumper", 0x0100, "/user/hand/left/input/thumbrest", "button", "touch"},
-    {"RB", "Right bumper", 0x0200, "/user/hand/right/input/thumbrest", "button", "touch"},
+    {"BackHold", "Back (hold 0.8 s)", 0x0020, "/user/hand/left/input/thumbrest", "button", "touch", kStartHoldMs},
+    {"LB", "Left bumper", 0x0100, "/user/hand/left/input/grip", "button", "click"},
+    {"RB", "Right bumper", 0x0200, "/user/hand/right/input/grip", "button", "click"},
 };
 constexpr int kPadActionCount = static_cast<int>(sizeof(kPadActions) / sizeof(kPadActions[0]));
 
 std::string PadActionName(const PadAction& a) { return std::string("/actions/main/in/Pad") + a.name; }
+int PadActionIndex(const char* name)
+{
+    for (int i = 0; i < kPadActionCount; ++i)
+        if (std::strcmp(kPadActions[i].name, name) == 0)
+            return i;
+    return -1;
+}
 
 // Labels must never contain a quote followed by a closing parenthesis (they go into raw strings).
 std::string BuildActionManifest()
@@ -171,7 +180,7 @@ std::string BuildTouchBindings()
     std::string s = R"({
   "controller_type": "oculus_touch",
   "name": "AvP VR defaults",
-  "description": "Default AvP VR bindings for Touch controllers: a virtual Xbox pad, thumbrests = bumpers",
+  "description": "Default AvP VR bindings for Touch controllers: a virtual Xbox pad, grips = bumpers",
   "bindings": {
     "/actions/main": {
       "poses": [
@@ -401,9 +410,30 @@ void Update()
     const ULONGLONG now = GetTickCount64();
     unsigned buttons = 0;
     static ULONGLONG downSince[kPadActionCount] = {};
+    // Both thumbrests touched together (the second within kBothRestsMs of the first): recenter, and that touch holds
+    // neither Back nor Start (until both are let go).
+    static const int kRestAction[2] = {PadActionIndex("BackHold"), PadActionIndex("StartHold")}; // left, right
+    static ULONGLONG restSince[2] = {};
+    static bool restsRecentered = false;
+    for (int h = 0; h < 2; ++h)
+    {
+        const bool touched = kRestAction[h] >= 0 && Digital(g_pad[kRestAction[h]]);
+        restSince[h] = !touched ? 0 : restSince[h] ? restSince[h] : now;
+    }
+    if (restSince[0] && restSince[1] && !restsRecentered &&
+        (restSince[0] > restSince[1] ? restSince[0] - restSince[1] : restSince[1] - restSince[0]) <= kBothRestsMs)
+    {
+        restsRecentered = true;
+        stereo::RequestRecenter();
+        AVP_LOG(kLog, "both thumbrests touched: recenter");
+    }
+    if (!restSince[0] && !restSince[1])
+        restsRecentered = false;
     for (int i = 0; i < kPadActionCount; ++i)
     {
         bool down = Digital(g_pad[i]);
+        if (restsRecentered && (i == kRestAction[0] || i == kRestAction[1]))
+            down = false;
         if (kPadActions[i].holdMs)
         {
             if (!down)

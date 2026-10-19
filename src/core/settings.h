@@ -16,7 +16,13 @@ float IpdScale();      // eye separation, x the headset's IPD
 bool GameCameraBase(); // eye cameras = the game's camera + the head's difference (keeps shake, recoil)
 bool RollFromHeadOnly(); // the game camera's own roll is dropped, the head's roll stays (render only), all species
 bool HeadPosition();        // the head's movement since the recenter moves the view (vr/stereo.cpp)
+// Room-scale: once the head is RoomScaleStepDistance (metres) off the character across, the character steps under it
+// (a left-stick input of RoomScaleStepSpeed and up), so the game's collision applies (vr/stereo.cpp).
+bool RoomScaleStep();
+float RoomScaleStepDistance();
+float RoomScaleStepSpeed();
 bool EyeFovBetweenFrames(); // view 0 between frames: the game camera's pose with the eyes' field of view (vs. its own)
+bool ScreenWarp(); // screen warp effects (the Alien's fisheye) also in VR (hooks/screen_warp.h); off: skipped there
 bool HudPanel();       // HUD squeezed into a panel (off = the game's full-view HUD, corners cut off)
 float HudWidthDeg();   // panel width (16:9)
 float HudDistance();   // metres: the eyes converge on the panel at this distance
@@ -56,6 +62,7 @@ bool ArmsFollowControllers();  // Marine: each arm + hand follows its controller
 void BodyOffset(float* forward, float* up); // the first-person body model moved from the view, metres (render only)
 float TorsoTurnDeg();   // the body's upper body turned from the stomach about the vertical, + right (render only)
 float ElbowSwivelDeg(); // the arm IK's elbows turned about the shoulder-wrist line, + from out toward down
+bool LayerAnimation();  // the hands (and the Marine's gun) also take the game animation's movement (first_person.cpp)
 // hand 0 = left, 1 = right; as GunOffset (settings in cm). One setting for both hands, mirrored for the left (its
 // right offset, yaw and roll reversed).
 void HandOffset(int hand, float off[3], float angles[3]);

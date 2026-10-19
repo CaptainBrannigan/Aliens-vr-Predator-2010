@@ -1,104 +1,121 @@
-# Aliens vs Predator (2010) VR
+# Aliens vs Predator VR
 
-A VR mod for **Aliens vs Predator (2010)**, the DX11 executable (`AvP_DX11.exe`, Steam build), through in-process
-32-bit SteamVR. Loaded as a `dxgi.dll` proxy from the game folder. Progress and plans: `docs/ROADMAP.md`.
+An unofficial VR mod for **Aliens vs Predator** (2010, Rebellion, DirectX 11). The game has no VR support of its own.
+This mod is a proxy `dxgi.dll` that hooks the game's rendering and input and talks to SteamVR directly from inside
+the game: stereo 3D for all three species, head-tracked look and movement, the Marine's gun and the arms of the
+Marine and the Predator on your motion controllers, and an in-headset settings menu.
 
-## Status: v0.199 (2026-10-18)
+**Status: Beta, a hobby reverse-engineering project.** It's playable, but there are rough edges; see
+[Known issues](#known-issues) and [Planned](#planned).
 
-**v0.199: 6DoF, profiles, Predator arms, cutscenes.**
-- **Positional head tracking (6DoF)**: the view moves with your head inside an anchored play space. It doesn't move the
-  character.
-- The **Predator's arms** follow the controllers too (its own bone rig).
-- **Profiles**: every setting is kept per class, switched with the class you play. The gun, shot and two-handed values
-  are also kept per weapon (pistol and pulse rifle identified by their mesh). The dashboard hides settings the class
-  doesn't use, and the hand placement is one set, mirrored for the left hand.
-- **Cutscenes and movies** show in full on the flat screen. They were black except for the Predator's cloak shimmer:
-  the game's frame has zero alpha there, and the screen is now made opaque. The multiplayer menu goes to the flat
-  screen too.
-- The **Marine reticle** hide is back (now the GUI pass's first draw). HUD distance is in cm (minimum 1 cm).
-- Untested: two-handed aim with the left hand kept relative to the right, and the **Head look** group (the look
-  offset with the head aim toggle).
+## Requirements
 
-**v0.198: the Marine aims with the gun.** The weapon model is on the right controller and **shots leave the drawn
-gun along its barrel** while the view and the look stay on the head (verified in single player and multiplayer).
-Every ranged weapon class is covered (the weapons' fire transform, hooked through shadow vtables). Settings in the
-**Aiming** group: the shot origin and angle on the gun (cm / degrees, tuned for the pistol), a **laser** along the
-shot line for lining them up (off by default; a SteamVR overlay, no hit test, so it shows through walls), and
-**two-handed aim**: hold the left grip with the left hand on the barrel and the gun points at it (ported from the
-MOHW mod; untested here). Props passing close by no longer get mistaken for the gun.
+- Aliens vs Predator (the Steam PC release), its **DirectX 11** version, `AvP_DX11.exe`. The DirectX 9 `AvP.exe` isn't
+  supported.
+- SteamVR **2.17 or newer** (the release that added a 32-bit runtime), with a headset and motion controllers.
+  Developed and tested on a Meta Quest 3 over Steam Link with Touch controllers; other headsets should work, but only
+  the Touch controllers get default bindings.
+- `openvr_api.dll` (32-bit) from your SteamVR install.
 
-**v0.15: Marine arms on the motion controllers** (render only). Each hand sits on its controller and two-bone IK
-bends the elbows; the shoulders stay on the body. The body, torso and elbows are adjustable in the dashboard's
-**Hands** group, the hands' placement in **Hand placement** (one set, mirrored for the left; cm and degrees), the
-gun's in **Weapon**. Every setting is kept per class (Marine / Predator / Alien, switched with the class played), the
-gun and shot values also per weapon; the dashboard hides what the class playing doesn't use.
+## Installing
 
-**v0.1: head look and stereo are complete** for all three species, single player and multiplayer (multiplayer not yet
-tested with a second player). Verified in the headset:
-- **Stereo**: the game renders twice per frame (left eye, then the right eye from the Present hook), each eye with
-  its own asymmetric frustum; full 3D world, lighting, culling.
-- **HUD** drawn into a centred panel in both eyes (size, distance, height adjustable); the marine motion tracker's
-  flat-screen duplicate hidden.
-- **Menus, pause menu, cutscenes, movies, loading screens** on a flat virtual screen in front of you.
-- **SteamVR dashboard tab "AvP VR"** with every mod setting (saved to `avpvr_settings.ini`, written on each change).
-- **Touch controllers as a virtual Xbox pad** (Quest 3 tested), rebindable in SteamVR's binding UI.
-- Level reloads within a session.
+Copy into the game's install folder, next to `AvP_DX11.exe`:
 
-- **Head aim** for all three species: the head aims (shots follow it), the right stick turns; the view is the game's
-  camera plus the head's difference, upright on Alien walls and ceilings; a per-class look direction offset.
+- `dxgi.dll` from [Releases](../../releases) (or build it yourself, see [DEVELOPMENT.md](DEVELOPMENT.md)).
+- `openvr_api.dll`, copied from `<Steam>\steamapps\common\SteamVR\bin\win32\openvr_api.dll`.
 
-Not done yet: Alien hands, Alien / Predator attacks, holsters (the weapon in whichever hand grips it), the game's arm
-animation switched off (hands locked to the controllers), melee gestures, room-scale walking that moves the character.
+Start SteamVR, then launch the game's DirectX 11 version. **Turn the game's motion blur off** in its graphics
+options: it compares each frame with the previous one, and in VR those are the two eyes.
 
-## Using it
+The mod creates `avpvr_settings.ini` and its SteamVR action and binding files next to the DLL on first launch. The
+settings start from the author's own tuned values, per species; an existing `avpvr_settings.ini` is kept. Settings are
+changed from inside the headset (see [Settings menu](#settings-menu)).
 
-1. Build (below) or take a `dxgi.dll`, and run `tools\deploy.ps1`: it copies `dxgi.dll` and a 32-bit
-   `openvr_api.dll` into the game folder (`-Remove` takes the mod out).
-2. Start SteamVR, then the game. **Turn the game's motion blur off** (it smears the second eye).
-3. Settings: SteamVR dashboard -> **AvP VR** tab. "Recenter view" is at the top.
+The mod never starts SteamVR itself: it checks for it every few seconds and switches VR on once it's running. Without
+it the game shows on the monitor as usual.
 
-Default Touch layout (change it in SteamVR -> Settings -> Controllers -> Manage controller bindings -> AvP):
+**Controller bindings:** in SteamVR's controller bindings for the game, pick **"AvP VR defaults"**. If you previously
+saved your own binding for the game, SteamVR keeps using that copy and won't pick up new actions from a newer
+version of the mod until you switch back to the defaults (or add the new actions to your copy).
 
-| Touch | Xbox pad |
+To remove the mod, delete `dxgi.dll` from the game folder.
+
+## Features
+
+### Rendering
+- **Stereo 3D** for the Marine, the Alien and the Predator, single player and multiplayer: the game renders each eye
+  with its own camera, at the headset's real, asymmetric field of view, with full lighting and shadows.
+- **HUD** in a head-locked panel that fuses in both eyes, with adjustable size, distance and height. The Marine's
+  screen-centre reticle is hidden (you aim with the gun), and a duplicate of the motion tracker the game leaves at
+  its flat-screen spot is removed.
+- **Menus, cutscenes, movies and loading screens** are shown on a floating screen in front of you, in full colour
+  (also the multiplayer menu, which doesn't pause the game).
+- The **Alien's fisheye** lens effect is off in VR by default (it warps each eye's image on its own); the setting
+  "Screen warp effects" brings it back.
+
+### Head tracking
+- **Head look:** your head aims, for all three species; the right stick turns smoothly. The view stays upright on
+  Alien walls and ceilings, and roll comes from your head only. A per-species look offset lines up where the game
+  aims with where you look.
+- **Positional tracking (6DoF):** lean, crouch and peek around corners. Walk around your room and the character
+  **steps under your head** once you're a set distance away, through the game's own movement, so walls and collision
+  still apply (the distance and step speed are settings). Your own stick movement carries your play space along.
+- **Recenter** from the settings menu, or touch both thumbrests at once.
+
+### Motion controllers
+- **Arms on your hands** (Marine and Predator): each hand sits on its controller and the arms bend to reach it
+  (two-bone IK). The body position, torso turn and elbow angle are adjustable per species, and the hand calibration
+  (offset and rotation) is one set, mirrored for the left hand.
+- **The game's animations play on top:** attacks, reloads and recoil still move your hands from where the
+  controllers hold them (can be switched off).
+- **The Marine's gun is in your right hand, and shots leave the gun** along its barrel, independent of where you
+  look. Each weapon keeps its own grip and shot-line calibration; weapons are recognised automatically.
+- **Laser sight** along the shot line, for calibrating (off by default; it shows through walls).
+- **Two-handed aiming** (Marine): grip with your left hand on the barrel and the gun points along the line between
+  your hands.
+
+### Controls (Touch, default bindings)
+
+The controllers act as an Xbox pad for the game; every action can be rebound in SteamVR.
+
+| Touch | Game (Xbox pad) |
 |---|---|
 | Sticks, stick clicks | Sticks, stick clicks |
-| Triggers | LT / RT (analog) |
-| A / B / X / Y | A / B / X / Y (held as long as you hold them) |
-| Thumbrest touch (left / right) | LB / RB |
+| Triggers | LT / RT |
+| Grips | LB / RB (the left grip on the Marine's gun barrel is the two-handed grab instead) |
+| A / B / X / Y | A / B / X / Y |
 | Double press X / Y / B / A | D-pad left / up / right / down |
-| Hold the right thumbrest (0.8 s) | Start (RB is held meanwhile) |
-| Left grip (left hand on the gun's barrel) | Two-handed aim, while held |
-| Right grip | Free (melee gestures later); Back unbound |
+| Hold the left / right thumbrest (0.8 s) | Back / Start |
+| Touch both thumbrests at once | Recenter the view |
 
-If you've ever saved your own bindings for the game, SteamVR keeps using that copy: pick "AvP VR defaults" there to
-get new actions.
+### Settings menu
 
-Logs (`avpvr_*.log`) are written next to the game; each launch keeps the previous one as `*.previous.log`.
+Open the SteamVR dashboard and pick the **AvP VR** tab. Every setting is there (nothing needs editing in the ini),
+grouped into View, HUD, Controls, Head look, Hands, Hand placement, Weapon and Aiming, and changes apply and save
+immediately. Settings are kept **per species**, switched automatically with the species you play, and the gun and
+shot values also **per weapon**; rows that don't apply to the species you're playing are hidden.
 
-## Layout
+## Known issues
 
-| Path | Contents |
-|---|---|
-| `src/proxy` | `dxgi.dll` proxy entry point and exports, mod initialization |
-| `src/core` | Logger, crash forensics, build detection, `addresses.h`, `settings` (the settings table + ini), developer flags |
-| `src/hooks` | Shadow vtables (CEG-safe virtual hooks), D3D11 hooks (counts, HUD panel, debug hiding), first-person body / weapon (bone buffer rewrite: arms IK, torso turn, bone hide, weapon placement), XInput virtual pad, trace/snapshot logging, old experiments |
-| `src/vr` | SteamVR session (connection, poses, submit, flat screen), stereo rendering, dashboard tab, SteamVR Input, head aim, shots from the gun, laser overlay |
-| `docs/re` | Reverse-engineering notes: `FINDINGS.md`, `FUNCTIONS.md` (generated), `TODO_AND_DECISIONS.md`, `avp_symbols.csv` |
-| `tools/ghidra` | Headless Ghidra scripts (`run.ps1` wrapper; `ApplySymbols.java` pushes the CSV names into the project) |
-| `tools/gen_functions_md.ps1` | Regenerates `docs/re/FUNCTIONS.md` from `avp_symbols.csv` |
-| `tools/deploy.ps1` | Copies the built `dxgi.dll` (and `openvr_api.dll` if missing) into the game folder |
-| `reference/mohw_port` | Uncompiled copies of the MOHW mod's VR modules; ported pieces are marked in its README |
-| `third_party` | MinHook, OpenVR headers |
+- **The Alien has no hands on the controllers yet**, and the Alien's and Predator's attacks are on buttons (grips,
+  triggers), not your hand movements.
+- **As the Alien, some distant things shift slightly against your head movement** (for example the view through
+  windows), while nearby walls and characters stay put. Being investigated.
+- **Multiplayer** works for you, but hasn't been tested with a second player: what others see of your head-driven
+  look and aim isn't verified.
+- Predator vision modes and zoom haven't been checked in VR.
+- The laser sight shows through walls (no hit test).
+- No controller rumble yet.
 
-**Steam CEG rule:** the game's code and read-only data are integrity-checked at level loads, so the mod never patches
-the exe image (no inline hooks, no vtable or import-table slot edits). Virtual functions are hooked with per-object
-shadow vtables on the heap, everything else inside system DLLs (d3d11, dxgi, xinput1_3) or through data. See
-`docs/re/FINDINGS.md` section 10.
+## Planned
 
-## Build
+- **Body holsters:** reach to a spot on your body and grip to draw or switch a weapon.
+- **Physical gestures:** swing your hands to attack (the Predator's wrist blades, the Alien's claws, the Marine's
+  melee).
+- The Alien's hands on the controllers.
+- Controller rumble.
 
-Visual Studio 2022 (v143), Win32:
+## Credits
 
-    MSBuild AvPVR.sln /p:Configuration=Release /p:Platform=Win32
-
-Output: `bin\Release\dxgi.dll`.
+Built with [MinHook](https://github.com/TsudaKageyu/minhook) and the [OpenVR](https://github.com/ValveSoftware/openvr)
+SDK. Not affiliated with Rebellion, SEGA, 20th Century Studios or Valve.

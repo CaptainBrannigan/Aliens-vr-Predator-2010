@@ -82,10 +82,5 @@ constexpr bool kDiagRenderEverything = false;
 constexpr float kEyeRightSign = 1.0f;  // flip if the stereo depth looks inverted (eyes swapped)
 constexpr bool kAddGamePitch = false;  // view pitch = head pitch only (true: + the game's look pitch)
 constexpr float kWorldUnitsPerMeter = 1.0f; // assumption: engine units are meters (x the IpdScale setting)
-// Room-scale walking (vr/stereo.cpp UpdateHeadPosition): the character walks after the real head. Off for now
-// (2026-10-18, the user: off by default, the setting removed) -- head position moves the view only.
-constexpr bool kRoomScaleMove = false;
-constexpr float kHeadLeadMeters = 0.20f; // room-scale: how far the view may run ahead of the character
-constexpr float kRoomScaleStick = 0.30f; // room-scale: the stick the character catches up with
 
 } // namespace avp::dev

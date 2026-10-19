@@ -46,37 +46,46 @@ const char* HidePassLabel(int i) { return i <= 0 ? "off" : HudPassLabel(i - 1); 
 // Order = display order; entries of a group must be contiguous.
 const Entry kEntries[] = {
     {"IpdScale", "View", "Eye distance (IPD) scale", Kind::Number, 1.0f, 0.5f, 2.0f, 0.02f, 2, "x", nullptr},
-    {"GameCameraBase", "View", "Keep the game camera's motion (shake, recoil)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
+    {"GameCameraBase", "View", "Keep the game camera's motion (shake, recoil)", Kind::Toggle, 0.0f, 0, 0, 0, 0, "",
      nullptr},
     {"RollFromHeadOnly", "View", "Camera roll from your head only", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"HeadPosition", "View", "Head position (lean, crouch, step)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
+    {"RoomScaleStep", "View", "Room-scale: the character steps under your head", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
+     nullptr},
+    {"RoomScaleStepCm", "View", "Room-scale: step once your head is this far off", Kind::Number, 10.0f, 10.0f, 100.0f,
+     1.0f, 0, "cm", nullptr},
+    {"RoomScaleStepSpeed", "View", "Room-scale: step speed (stick)", Kind::Number, 0.5f, 0.1f, 0.5f, 0.05f, 2, "",
+     nullptr},
     {"EyeFovBetweenFrames", "View", "Wide culling between frames (less pop-in)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
      nullptr},
+    {"ScreenWarp", "View", "Screen warp effects (the Alien's fisheye)", Kind::Toggle, 0.0f, 0, 0, 0, 0, "", nullptr},
     {"HudPanel", "HUD", "HUD in a panel (off = full view)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
-    {"HudWidthDeg", "HUD", "HUD size (width)", Kind::Number, 60.0f, 20.0f, 110.0f, 1.0f, 0, "deg", nullptr},
-    {"HudDistanceCm", "HUD", "HUD distance", Kind::Number, 250.0f, 1.0f, 2000.0f, 1.0f, 0, "cm", nullptr},
-    {"HudHeightDeg", "HUD", "HUD height (+ up)", Kind::Number, 0.0f, -30.0f, 30.0f, 0.5f, 1, "deg", nullptr},
+    {"HudWidthDeg", "HUD", "HUD size (width)", Kind::Number, 88.0f, 20.0f, 110.0f, 1.0f, 0, "deg", nullptr},
+    {"HudDistanceCm", "HUD", "HUD distance", Kind::Number, 50.0f, 1.0f, 2000.0f, 1.0f, 0, "cm", nullptr},
+    {"HudHeightDeg", "HUD", "HUD height (+ up)", Kind::Number, -20.0f, -30.0f, 30.0f, 0.5f, 1, "deg", nullptr},
     {"HideDuplicateTracker", "HUD", "Hide the duplicate motion tracker", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"HideMarineReticle", "HUD", "Hide the reticle (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"TurnSpeedDeg", "Controls", "Turn speed (right stick)", Kind::Number, 150.0f, 30.0f, 360.0f, 5.0f, 0, "deg/s",
      nullptr},
-    {"StickFullDeflection", "Controls", "Stick counts as full at", Kind::Number, 0.95f, 0.5f, 1.0f, 0.01f, 2, "",
+    {"StickFullDeflection", "Controls", "Stick counts as full at", Kind::Number, 0.86f, 0.5f, 1.0f, 0.01f, 2, "",
      nullptr},
     {"TurnSpeed", "Controls", "Game look speed (head aim off)", Kind::Number, 1.0f, 0.2f, 3.0f, 0.05f, 2, "x",
      nullptr},
     {"HeadAim", "Head look", "Head aim (your head aims)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
-    {"LookOffsetUp", "Head look", "Look up from the view", Kind::Number, 0.0f, -15.0f, 15.0f, 0.25f, 2,
+    {"LookOffsetUp", "Head look", "Look up from the view", Kind::Number, -12.5f, -15.0f, 15.0f, 0.25f, 2,
      "deg", nullptr},
     {"LookOffsetRight", "Head look", "Look right from the view", Kind::Number, 0.0f, -15.0f, 15.0f, 0.25f,
      2, "deg", nullptr},
     {"ArmsFollowControllers", "Hands", "Arms follow the controllers (Marine, Predator)", Kind::Toggle, 1.0f, 0, 0, 0,
      0, "", nullptr},
     {"SpeciesProfile", "Hands", "Body and hand values below are for", Kind::Info, 0, 0, 0, 0, 0, "", nullptr},
-    {"BodyForward", "Hands", "Body (shoulders) forward", Kind::Number, 0.05f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
-    {"BodyUp", "Hands", "Body (shoulders) up", Kind::Number, -0.06f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
-    {"StomachTurn", "Hands", "Torso turn from the stomach (+ right)", Kind::Number, -10.0f, -90.0f, 90.0f, 1.0f, 0,
+    {"BodyForward", "Hands", "Body (shoulders) forward", Kind::Number, 0.10f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
+    {"BodyUp", "Hands", "Body (shoulders) up", Kind::Number, -0.13f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
+    {"StomachTurn", "Hands", "Torso turn from the stomach (+ right)", Kind::Number, -15.0f, -90.0f, 90.0f, 1.0f, 0,
      "deg", nullptr},
-    {"ElbowSwivel", "Hands", "Elbow swivel (+ lowers the elbows)", Kind::Number, 30.0f, -90.0f, 90.0f, 1.0f, 0, "deg",
+    {"ElbowSwivel", "Hands", "Elbow swivel (+ lowers the elbows)", Kind::Number, 50.0f, -90.0f, 90.0f, 1.0f, 0, "deg",
+     nullptr},
+    {"LayerAnimation", "Hands", "Hands also move with the game's animation", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
      nullptr},
     {"GunOnRightController", "Weapon", "Gun on the right controller (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
      nullptr},
@@ -128,7 +137,11 @@ enum Index
     kGameCameraBase,
     kRollFromHeadOnly,
     kHeadPosition,
+    kRoomScaleStep,
+    kRoomScaleStepCm,
+    kRoomScaleStepSpeed,
     kEyeFovBetweenFrames,
+    kScreenWarp,
     kHudPanel,
     kHudWidthDeg,
     kHudDistanceCm,
@@ -147,6 +160,7 @@ enum Index
     kBodyUp,
     kStomachTurn,
     kElbowSwivel,
+    kLayerAnimation,
     kGunOnRightController,
     kWeaponProfile,
     kGunOffsetRight,
@@ -209,7 +223,7 @@ ProfileSet g_weaponSet{"Weapon", "CurrentWeapon",
                         kTwoHandGrabRadius, kTwoHandReach, kSecondaryGripRight, kSecondaryGripUp},
                        {}, "", "no weapon seen yet", false};
 // Every other setting is per species (InitSets): all but the Info rows, the Debug group and the weapon set's.
-ProfileSet g_speciesSet{"Species", "CurrentSpecies", {}, {}, "", "no species seen yet", true};
+ProfileSet g_speciesSet{"Species", "CurrentSpecies", {}, {}, "", "no species seen yet", false};
 ProfileSet* const g_sets[] = {&g_weaponSet, &g_speciesSet};
 
 Profile* FindProfile(ProfileSet& s, const std::string& key)
@@ -220,6 +234,30 @@ Profile* FindProfile(ProfileSet& s, const std::string& key)
     return nullptr;
 }
 
+// The classes' own built-in defaults where they differ from the entries' (the Marine's): the user's tuned values,
+// 2026-10-18. A class seen for the first time starts from these.
+struct SpeciesDefault
+{
+    const char* species;
+    int index;
+    float value;
+};
+constexpr SpeciesDefault kSpeciesDefaults[] = {
+    {"Predator", kRoomScaleStepCm, 30.0f},  {"Predator", kRoomScaleStepSpeed, 0.3f},
+    {"Predator", kEyeFovBetweenFrames, 0.0f}, {"Predator", kHudDistanceCm, 30.0f},
+    {"Predator", kHudHeightDeg, -10.0f},    {"Predator", kLookOffsetUp, -13.25f},
+    {"Predator", kBodyForward, 0.09f},      {"Predator", kBodyUp, -0.01f},
+    {"Predator", kStomachTurn, 0.0f},       {"Predator", kElbowSwivel, -20.0f},
+    {"Predator", kHandForward, 0.5f},       {"Predator", kHandPitch, -86.0f},
+    {"Predator", kHandYaw, 25.0f},
+    {"Alien", kRoomScaleStepCm, 30.0f},     {"Alien", kRoomScaleStepSpeed, 0.3f},
+    {"Alien", kEyeFovBetweenFrames, 0.0f},  {"Alien", kHudWidthDeg, 78.0f},
+    {"Alien", kHudDistanceCm, 150.0f},      {"Alien", kHudHeightDeg, -15.0f},
+    {"Alien", kLookOffsetUp, 0.0f},         {"Alien", kBodyForward, 0.13f},
+    {"Alien", kBodyUp, -0.03f},             {"Alien", kStomachTurn, 0.0f},
+    {"Alien", kElbowSwivel, 0.0f},
+};
+
 Profile& ProfileFor(ProfileSet& s, const std::string& key)
 {
     if (Profile* p = FindProfile(s, key))
@@ -227,7 +265,14 @@ Profile& ProfileFor(ProfileSet& s, const std::string& key)
     Profile p;
     p.key = key;
     for (int slot : s.slots)
-        p.v.push_back(kEntries[slot].defaultValue);
+    {
+        float v = kEntries[slot].defaultValue;
+        if (&s == &g_speciesSet)
+            for (const SpeciesDefault& d : kSpeciesDefaults)
+                if (d.index == slot && key == d.species)
+                    v = d.value;
+        p.v.push_back(v);
+    }
     s.profiles.push_back(p);
     return s.profiles.back();
 }
@@ -296,6 +341,9 @@ bool VisibleFor(int index)
         return marine || predator; // the arm rigs
     if (std::strcmp(group, "Head look") == 0 && index != kHeadAim)
         return g_values[kHeadAim].load(std::memory_order_relaxed) != 0.0f;
+    if (index == kRoomScaleStep || index == kRoomScaleStepCm || index == kRoomScaleStepSpeed)
+        return g_values[kHeadPosition].load(std::memory_order_relaxed) != 0.0f &&
+               (index == kRoomScaleStep || g_values[kRoomScaleStep].load(std::memory_order_relaxed) != 0.0f);
     return true;
 }
 
@@ -515,7 +563,12 @@ float HudHeightDeg() { return g_values[kHudHeightDeg].load(std::memory_order_rel
 
 bool GameCameraBase() { return g_values[kGameCameraBase].load(std::memory_order_relaxed) != 0.0f; }
 bool HeadPosition() { return g_values[kHeadPosition].load(std::memory_order_relaxed) != 0.0f; }
+bool RoomScaleStep() { return g_values[kRoomScaleStep].load(std::memory_order_relaxed) != 0.0f; }
+float RoomScaleStepDistance() { return g_values[kRoomScaleStepCm].load(std::memory_order_relaxed) * 0.01f; }
+float RoomScaleStepSpeed() { return g_values[kRoomScaleStepSpeed].load(std::memory_order_relaxed); }
+bool LayerAnimation() { return g_values[kLayerAnimation].load(std::memory_order_relaxed) != 0.0f; }
 bool EyeFovBetweenFrames() { return g_values[kEyeFovBetweenFrames].load(std::memory_order_relaxed) != 0.0f; }
+bool ScreenWarp() { return g_values[kScreenWarp].load(std::memory_order_relaxed) != 0.0f; }
 bool RollFromHeadOnly() { return g_values[kRollFromHeadOnly].load(std::memory_order_relaxed) != 0.0f; }
 bool HideMarineReticle() { return g_values[kHideMarineReticle].load(std::memory_order_relaxed) != 0.0f; }
 
@@ -598,7 +651,9 @@ void SwitchProfileLocked(ProfileSet& s, const char* key, const char* name)
     const bool hadOne = !s.key.empty();
     const bool known = FindProfile(s, key) != nullptr;
     s.key = key;
-    if (known || (hadOne && !s.newFromCurrent))
+    // A class: its own built-in defaults even as the first profile (kSpeciesDefaults).
+    const bool fresh = (hadOne || &s == &g_speciesSet) && !s.newFromCurrent;
+    if (known || fresh)
     {
         // Its own values, or the defaults the first time.
         const Profile& p = ProfileFor(s, s.key);
@@ -607,7 +662,7 @@ void SwitchProfileLocked(ProfileSet& s, const char* key, const char* name)
     }
     // (None before -- the first one after an update without these profiles -- keeps the values as they are.)
     AVP_LOG(kLog, "%s profile: %s (%s), %s", s.prefix, key, name,
-            known ? "its own values" : hadOne && !s.newFromCurrent ? "new: the defaults" : "new: the current values");
+            known ? "its own values" : fresh ? "new: the defaults" : "new: the current values");
     WriteFileLocked();
 }
 } // namespace

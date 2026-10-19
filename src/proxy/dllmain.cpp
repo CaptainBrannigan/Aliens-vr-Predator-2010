@@ -16,6 +16,7 @@
 #include "../hooks/d3d_probe.h"
 #include "../hooks/quit_hook.h"
 #include "../hooks/render_twice_experiment.h"
+#include "../hooks/screen_warp.h"
 #include "../hooks/snapshot.h"
 #include "../hooks/trace_hooks.h"
 #include "../hooks/two_view_experiment.h"
@@ -85,6 +86,7 @@ void InitializeMod()
     avp::stereo::Register(); // camera-apply replacement in the shadow vtables (VR eye cameras)
     avp::aim::Register();    // head aim: look controller SetLookDirection -- see avpvr_aim.log
     avp::shots::Register();  // shots from the gun: the weapons' GetFireTransform -- see avpvr_shots.log
+    avp::screen_warp::Register(); // screen warp effects (the Alien's fisheye) skipped in VR
     avp::StartVmtShadow(); // per-object shadow vtables (CEG-safe virtual hooks) -- see avpvr_shadow.log
     avp::StartD3DProbe();  // draw/viewport/present counts from hooks in d3d11/dxgi -- see avpvr_d3d.log
     avp::StartRenderTwiceExperiment();

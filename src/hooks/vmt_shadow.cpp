@@ -79,6 +79,20 @@ bool ValidateRangedWeapon(uintptr_t object)
     return SafeRead32(object + 0x40, &type) && type < 0x20 && SafeRead32(object + 0x80, &flags) && (flags & 0x80);
 }
 
+// A screen warp effect (addresses.h vt_ScreenWarp; ctor 00798AF0): a small priority at +0x04 (0x7F), its name string
+// at +0x08 (pointer -- the shared empty string 009A784B or a heap copy -- length, capacity), a finite intensity at +0x1C.
+bool ValidateScreenWarp(uintptr_t object)
+{
+    uint32_t priority = 0, name = 0, len = 0, cap = 0, intensity = 0;
+    if (!SafeRead32(object + 0x04, &priority) || priority > 0xFFFF || !SafeRead32(object + 0x08, &name) ||
+        !SafeRead32(object + 0x0C, &len) || !SafeRead32(object + 0x10, &cap) || !SafeRead32(object + 0x1C, &intensity))
+        return false;
+    float f;
+    memcpy(&f, &intensity, 4);
+    const bool nameOk = name >= 0x10000 && name < 0xFFFF0000u && len < 256 && cap >= len; // may be unaligned
+    return nameOk && f == f && f > -1000.0f && f < 1000.0f;
+}
+
 // Logs a candidate's identifying fields the first time it's seen (capped), with the validation verdict.
 void LogCandidateOnce(const char* className, uintptr_t object, bool valid)
 {
@@ -125,6 +139,7 @@ ShadowClass g_classes[] = {
     {"RangedWeapon 00936418", addr::vt_RangedWeapons[11], &ValidateRangedWeapon},
     {"RangedWeapon 00936698", addr::vt_RangedWeapons[12], &ValidateRangedWeapon},
     {"RangedWeapon 009367A8", addr::vt_RangedWeapons[13], &ValidateRangedWeapon},
+    {"ScreenWarp 00933578", addr::vt_ScreenWarp, &ValidateScreenWarp},
 };
 constexpr int kClassCount = static_cast<int>(sizeof(g_classes) / sizeof(g_classes[0]));
 

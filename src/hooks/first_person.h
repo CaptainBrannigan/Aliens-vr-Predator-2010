@@ -41,4 +41,8 @@ void OnPresent(ID3D11DeviceContext* ctx);
 // The weapon = a first-person model whose origin is at one of the game's own hands (props passing close by aren't).
 bool GunPlacement(float m[16], float placedOrigin[3] = nullptr);
 
+// The Marine's left palm is in the two-handed grab zone on the gun (or holds it): the left grip is the grab there, so
+// the XInput hook drops the left bumper it also presses. Any thread.
+bool LeftGripOnGun();
+
 } // namespace avp::fp
