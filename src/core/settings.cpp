@@ -85,6 +85,19 @@ const Entry kEntries[] = {
      "deg", nullptr},
     {"ElbowSwivel", "Hands", "Elbow swivel (+ lowers the elbows)", Kind::Number, 50.0f, -90.0f, 90.0f, 1.0f, 0, "deg",
      nullptr},
+    {"ElbowRollModel", "Hands", "Elbows follow the wrist's roll (natural model)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
+     nullptr},
+    {"ElbowFollowRoll", "Hands", "Elbow: how much it follows the wrist's roll", Kind::Number, 0.5f, 0.0f, 1.0f, 0.05f,
+     2, "", nullptr},
+    {"ElbowInKnee", "Hands", "Elbow inward: follows exactly up to", Kind::Number, 30.0f, 0.0f, 150.0f, 1.0f, 0, "deg",
+     nullptr},
+    {"ElbowInMax", "Hands", "Elbow inward: at most", Kind::Number, 60.0f, 0.0f, 170.0f, 1.0f, 0, "deg", nullptr},
+    {"ElbowInNearBody", "Hands", "Elbow inward with the hand near the body", Kind::Number, 0.25f, 0.0f, 1.0f, 0.05f, 2,
+     "x", nullptr},
+    {"ElbowOutKnee", "Hands", "Elbow outward: follows exactly up to", Kind::Number, 60.0f, 0.0f, 150.0f, 1.0f, 0,
+     "deg", nullptr},
+    {"ElbowOutMax", "Hands", "Elbow outward: at most", Kind::Number, 110.0f, 0.0f, 170.0f, 1.0f, 0, "deg", nullptr},
+    {"ElbowSmoothingMs", "Hands", "Elbow smoothing", Kind::Number, 80.0f, 0.0f, 300.0f, 10.0f, 0, "ms", nullptr},
     {"LayerAnimation", "Hands", "Hands also move with the game's animation", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
      nullptr},
     {"GunOnRightController", "Weapon", "Gun on the right controller (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
@@ -123,6 +136,7 @@ const Entry kEntries[] = {
     {"HideBodyBonesFirst", "Debug", "Hide body bones from #", Kind::Number, 0.0f, 0.0f, 128.0f, 1.0f, 0, "", nullptr},
     {"HideBodyBonesLast", "Debug", "Hide body bones to #", Kind::Number, 0.0f, 0.0f, 128.0f, 1.0f, 0, "", nullptr},
     {"DebugMeshProbe", "Debug", "Mesh probe (log the body pass's draws)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
+    {"DebugElbowLog", "Debug", "Elbow model log (every frame)", Kind::Toggle, 0.0f, 0, 0, 0, 0, "", nullptr},
     {"DebugHidePass", "Debug", "Hide pass", Kind::Choice, 0.0f, 0.0f, static_cast<float>(kHudPassCount + 1), 1.0f, 0, "",
      &HidePassLabel},
     {"DebugHideDraw", "Debug", "Hide only draw # of it (0 = all)", Kind::Number, 0.0f, 0.0f, 999.0f, 1.0f, 0, "",
@@ -160,6 +174,14 @@ enum Index
     kBodyUp,
     kStomachTurn,
     kElbowSwivel,
+    kElbowRollModel,
+    kElbowFollowRoll,
+    kElbowInKnee,
+    kElbowInMax,
+    kElbowInNearBody,
+    kElbowOutKnee,
+    kElbowOutMax,
+    kElbowSmoothingMs,
     kLayerAnimation,
     kGunOnRightController,
     kWeaponProfile,
@@ -190,6 +212,7 @@ enum Index
     kHideBodyBonesFirst,
     kHideBodyBonesLast,
     kDebugMeshProbe,
+    kDebugElbowLog,
     kDebugHidePass,
     kDebugHideDraw,
 };
@@ -337,6 +360,10 @@ bool VisibleFor(int index)
         return marine; // the motion tracker, the reticle hide, the Marine's torso bones
     if (std::strcmp(group, "Weapon") == 0 || std::strcmp(group, "Aiming") == 0)
         return marine; // the guns
+    if (index > kElbowRollModel && index <= kElbowSmoothingMs)
+        return (marine || predator) && g_values[kElbowRollModel].load(std::memory_order_relaxed) != 0.0f;
+    if (index == kElbowSwivel) // the natural model's zero is the elbow down: the swivel is the plain IK's
+        return (marine || predator) && g_values[kElbowRollModel].load(std::memory_order_relaxed) == 0.0f;
     if (std::strcmp(group, "Hands") == 0 || std::strcmp(group, "Hand placement") == 0)
         return marine || predator; // the arm rigs
     if (std::strcmp(group, "Head look") == 0 && index != kHeadAim)
@@ -634,9 +661,24 @@ void BodyOffset(float* forward, float* up)
 }
 float TorsoTurnDeg() { return g_values[kStomachTurn].load(std::memory_order_relaxed); }
 float ElbowSwivelDeg() { return g_values[kElbowSwivel].load(std::memory_order_relaxed); }
+ElbowModel ElbowModelSettings()
+{
+    auto v = [](int i) { return g_values[i].load(std::memory_order_relaxed); };
+    ElbowModel m;
+    m.enabled = v(kElbowRollModel) != 0.0f;
+    m.follow = v(kElbowFollowRoll);
+    m.inKneeDeg = v(kElbowInKnee);
+    m.inMaxDeg = v(kElbowInMax);
+    m.inNearBody = v(kElbowInNearBody);
+    m.outKneeDeg = v(kElbowOutKnee);
+    m.outMaxDeg = v(kElbowOutMax);
+    m.smoothingMs = v(kElbowSmoothingMs);
+    return m;
+}
 int HideBodyBonesFirst() { return static_cast<int>(g_values[kHideBodyBonesFirst].load(std::memory_order_relaxed)); }
 int HideBodyBonesLast() { return static_cast<int>(g_values[kHideBodyBonesLast].load(std::memory_order_relaxed)); }
 bool DebugMeshProbe() { return g_values[kDebugMeshProbe].load(std::memory_order_relaxed) != 0.0f; }
+bool DebugElbowLog() { return g_values[kDebugElbowLog].load(std::memory_order_relaxed) != 0.0f; }
 int DebugHidePass() { return static_cast<int>(g_values[kDebugHidePass].load(std::memory_order_relaxed)) - 1; }
 bool HideDuplicateTracker() { return g_values[kHideDuplicateTracker].load(std::memory_order_relaxed) != 0.0f; }
 int DebugHideDraw() { return static_cast<int>(g_values[kDebugHideDraw].load(std::memory_order_relaxed)); }

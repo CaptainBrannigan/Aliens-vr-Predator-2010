@@ -62,6 +62,15 @@ bool ArmsFollowControllers();  // Marine: each arm + hand follows its controller
 void BodyOffset(float* forward, float* up); // the first-person body model moved from the view, metres (render only)
 float TorsoTurnDeg();   // the body's upper body turned from the stomach about the vertical, + right (render only)
 float ElbowSwivelDeg(); // the arm IK's elbows turned about the shoulder-wrist line, + from out toward down
+// The elbow model (hooks/first_person.cpp): the elbow's angle about the shoulder-wrist line, from the body's down,
+// = follow x the wrist's roll, through a soft-knee curve per side (exact up to the knee, then easing toward the max);
+// only the inward knee and max shrink (to inNearBody) as the hand comes in toward the body. Smoothed over smoothingMs.
+struct ElbowModel
+{
+    bool enabled;
+    float follow, inKneeDeg, inMaxDeg, inNearBody, outKneeDeg, outMaxDeg, smoothingMs;
+};
+ElbowModel ElbowModelSettings();
 bool LayerAnimation();  // the hands (and the Marine's gun) also take the game animation's movement (first_person.cpp)
 // hand 0 = left, 1 = right; as GunOffset (settings in cm). One setting for both hands, mirrored for the left (its
 // right offset, yaw and roll reversed).
@@ -69,6 +78,7 @@ void HandOffset(int hand, float off[3], float angles[3]);
 int HideBodyBonesFirst();     // bone hide on the first-person body: bones # first..last (1-based), 0 = off
 int HideBodyBonesLast();
 bool DebugMeshProbe(); // log the first-person body pass's draws (hooks/first_person.h)
+bool DebugElbowLog();  // the elbow model logs both arms every frame (avpvr_fp.log)
 int DebugHidePass();   // index into kHudPasses (hooks/hud_passes.h) whose draws are skipped, kHidePassUnlisted, -1 = none
 int DebugHideDraw();   // only that pass's Nth draw (per eye render), 0 = all of them
 

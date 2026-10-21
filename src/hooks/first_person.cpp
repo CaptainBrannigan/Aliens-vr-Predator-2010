@@ -489,6 +489,210 @@ void LayerMove(int hand, const float camRot[9], const float camPos[3], const flo
     std::memcpy(l.world, out, sizeof(l.world));
 }
 
+// ---- The natural elbow model (2026-10-21; settings ElbowModelSettings) ----
+// The elbow is one angle about the shoulder-wrist line, measured from a zero that can't become undefined: the body's
+// down, blended toward its back as the arm comes near vertical (arms hanging: elbows back).
+// The wrist's roll is the hand's own: the controller's down side (the bottom of the fist) about its pointing axis
+// (the AIM pose's forward: the forearm, for a straight wrist), from the body's down tilted with the hand's pitch
+// (pointing down: the body's back, up: its front) -- so it depends only on how the hand is held, bent arm or straight.
+// + = outward (palm down swings the elbow out, palm up in; mirrored between the hands), unwrapped against the last frame
+// so it never jumps between about +180 and -180. The angle = follow x roll, through a soft-knee curve per side (exact
+// up to the knee, then easing toward the max, no corner). Only the inward knee and max shrink, to inNearBody, as the
+// hand comes in toward the body -- its distance across from the line straight down from the head
+// (the character's eye; along the body's down), kNearBodyM..kAwayFromBodyM. Smoothed. Worked out once per frame (the
+// left eye's render); the right eye's reuses it.
+// History: the first build hard-limited the plain IK's elbow (flip-flopped at the slightest rotation); the next
+// measured the roll about the shoulder-wrist line -- with the hand near the body that line runs along the fist's
+// bottom, the reading was held and the elbow froze, and its outward sign flip-flopped (the elbow snapped from down to
+// the outer limit); the next read the GRIP pose, whose forward runs up the Touch handle (the log: "hand points down"
+// -0.9 with the hand held out), so the roll was about a near-vertical axis whose reference is the body's back -- the
+// body turns with the head, and facing an elbow swung the reading inward: the elbow wouldn't go outward.
+constexpr float kNearBodyM = 0.15f, kAwayFromBodyM = 0.45f;
+struct ElbowState
+{
+    bool have = false;
+    float rawRoll = 0.0f;   // the latest reading (radians, -pi..pi, right-handed about the controller's forward)
+    float roll = 0.0f;      // unwrapped, same sense
+    float theta = 0.0f;     // the smoothed elbow angle, + = outward (radians)
+    float rollSense = 1.0f; // outward for the roll: + turns about the controller's forward go this way
+    float outSense = 1.0f;  // outward for the elbow: + turns about the shoulder-wrist line go this way
+    DWORD tick = 0;
+};
+ElbowState g_elbow[2];
+constexpr float kPi = 3.14159265f;
+constexpr DWORD kElbowGapMs = 500; // no update for this long: start afresh
+constexpr float kSenseClear = 0.3f; // a sense is only taken when the side lies this clearly one way
+
+float SmoothStep(float e0, float e1, float x)
+{
+    const float t = std::fmin(1.0f, std::fmax(0.0f, (x - e0) / (e1 - e0)));
+    return t * t * (3.0f - 2.0f * t);
+}
+// x >= 0: x up to the knee, then easing toward max (slope 1 at the knee, never reaching max).
+float SoftKnee(float x, float knee, float max)
+{
+    if (x <= knee)
+        return x;
+    if (max <= knee)
+        return knee;
+    const float span = max - knee;
+    return knee + span * std::tanh((x - knee) / span);
+}
+float WrapPi(float a)
+{
+    while (a > kPi)
+        a -= 2.0f * kPi;
+    while (a <= -kPi)
+        a += 2.0f * kPi;
+    return a;
+}
+// The body's down made perpendicular to axis, tilted toward the body's back as axis nears vertical (axis pointing
+// down: the back; up: the front). False if it can't be (no forward sign yet and the axis vertical).
+bool BodyDownAbout(const float axis[3], float out[3])
+{
+    const float down[3] = {0.0f, 1.0f, 0.0f}; // model y
+    const float ad = Dot3(axis, down);
+    const float offVertical = std::sqrt(std::fmax(0.0f, 1.0f - ad * ad));
+    const float w = g_bodyForwardSign != 0.0f ? 1.0f - SmoothStep(0.2f, 0.5f, offVertical) : 0.0f;
+    const float backSide = ad >= 0.0f ? 1.0f : -1.0f;
+    const float v[3] = {-g_bodyForwardSign * w * backSide, 1.0f - w, 0.0f};
+    return PerpTo(axis, v, out);
+}
+// The sense (+1 / -1) in which a + turn about axis takes from moves toward out. Hysteresis: once decided it only
+// flips when the side lies clearly (kSenseFlip) the other way (2026-10-21: turning the head turns the game's body
+// against the controllers, and a sense flipping near the edge sped the elbow up and snapped it). Returns true when it
+// flipped; *along = the side's component (for the log).
+constexpr float kSenseFlip = 0.5f;
+bool UpdateSense(const float axis[3], const float from[3], const float out[3], float& sense, bool decided,
+                 float* along)
+{
+    float t[3];
+    Cross3(axis, from, t);
+    *along = 0.0f;
+    if (!Normalize3(t))
+        return false;
+    *along = Dot3(t, out);
+    const float wanted = *along >= 0.0f ? 1.0f : -1.0f;
+    if (!decided)
+    {
+        if (std::fabs(*along) > kSenseClear)
+            sense = wanted;
+        return false;
+    }
+    if (wanted != sense && std::fabs(*along) > kSenseFlip)
+    {
+        sense = wanted;
+        return true;
+    }
+    return false;
+}
+
+// The elbow's side (unit, perpendicular to n: the shoulder -> wrist line, model space) from the model. False when it's
+// off or can't be worked out (then the plain IK's side stays). bodyDist = how far across the hand is from the line
+// straight down from the head (metres).
+bool ElbowFromModel(int hand, const ArmRig& r, float* buffer, const float winv[16], const float n[3], float bodyDist,
+                    float side[3], bool log)
+{
+    const settings::ElbowModel m = settings::ElbowModelSettings();
+    if (!m.enabled)
+        return false;
+    ElbowState& s = g_elbow[hand];
+    const DWORD now = GetTickCount();
+    if (s.have && now - s.tick > kElbowGapMs)
+        s.have = false;
+
+    float zero[3];
+    if (!BodyDownAbout(n, zero))
+        return false;
+    // Outward: the arm's side of the chest (bind x: left arm -, right arm +).
+    float chest[16], factor;
+    ReadBone(BoneSlot(buffer, r.chest), chest, &factor);
+    const float sign = hand ? 1.0f : -1.0f;
+    float out[3] = {sign * chest[0], sign * chest[1], sign * chest[2]};
+    if (!Normalize3(out))
+        return false;
+    float outAlong = 0.0f, rollAlong = 0.0f;
+    const bool outFlipped = UpdateSense(n, zero, out, s.outSense, s.have, &outAlong);
+
+    if (!g_bodySecondRender)
+    {
+        // The hand's roll: its down about its forward, from the body's down about that forward.
+        float pose[3][4], rot[9], pos[3];
+        bool reliable = false, rollFlipped = false;
+        float fVert = 0.0f, rawRead = 0.0f;
+        const float rollBefore = s.roll, thetaBefore = s.theta;
+        if (input::GetHandPose(hand, false, pose) && stereo::HandToWorld(pose, rot, pos))
+        {
+            float f[3], d[3];
+            for (int j = 0; j < 3; ++j) // world -> model (row vectors): v * W^-1; columns 2 / 1 = forward / down
+            {
+                f[j] = rot[2] * winv[0 * 4 + j] + rot[5] * winv[1 * 4 + j] + rot[8] * winv[2 * 4 + j];
+                d[j] = rot[1] * winv[0 * 4 + j] + rot[4] * winv[1 * 4 + j] + rot[7] * winv[2 * 4 + j];
+            }
+            float zf[3], dP[3], cr[3];
+            if (Normalize3(f) && BodyDownAbout(f, zf) && PerpTo(f, d, dP))
+            {
+                rollFlipped = UpdateSense(f, zf, out, s.rollSense, s.have, &rollAlong);
+                fVert = f[1]; // + = the hand points down
+                Cross3(zf, dP, cr);
+                const float raw = std::atan2(Dot3(cr, f), Dot3(zf, dP));
+                rawRead = raw;
+                if (!s.have)
+                    s.rawRoll = s.roll = raw;
+                else
+                {
+                    s.roll += WrapPi(raw - s.rawRoll); // unwrapped: continuous through +-180
+                    s.rawRoll = raw;
+                    if (s.roll > 1.5f * kPi || s.roll < -1.5f * kPi)
+                        s.roll = WrapPi(s.roll); // tracking glitch: don't wind up
+                }
+                reliable = true;
+            }
+        }
+        if (!reliable && !s.have)
+            return false;
+
+        constexpr float kRad = 0.01745329252f;
+        const float outward = m.follow * s.roll * s.rollSense; // + = outward
+        float shaped;
+        if (outward >= 0.0f)
+            shaped = SoftKnee(outward, m.outKneeDeg * kRad, m.outMaxDeg * kRad); // never scaled by the body distance
+        else
+        {
+            const float scale = m.inNearBody + (1.0f - m.inNearBody) * SmoothStep(kNearBodyM, kAwayFromBodyM, bodyDist);
+            shaped = -SoftKnee(-outward, m.inKneeDeg * kRad * scale, m.inMaxDeg * kRad * scale);
+        }
+        const bool hadBefore = s.have;
+        if (!s.have || m.smoothingMs <= 0.0f)
+            s.theta = shaped;
+        else
+            s.theta += (shaped - s.theta) * (1.0f - std::exp(-static_cast<float>(now - s.tick) / m.smoothingMs));
+        s.have = true;
+        s.tick = now;
+        // Diagnostics: the first frame, and every frame while DebugElbowLog is on; "JUMP" marks a sense flip, the roll
+        // by 30 degrees or the elbow by 10 in one frame.
+        const bool jump = hadBefore && (outFlipped || rollFlipped || std::fabs(s.roll - rollBefore) > 30.0f * kRad ||
+                                        std::fabs(s.theta - thetaBefore) > 10.0f * kRad);
+        if (log || settings::DebugElbowLog())
+        {
+            AVP_LOG(kLog,
+                    "arms: %s elbow model%s: roll %.0f (raw %.0f, outward sense %+.0f, side along %.2f%s), hand points "
+                    "down %.2f, target %.0f, shaped %.0f, elbow %.0f (was %.0f), elbow sense %+.0f (side along "
+                    "%.2f%s), hand from the body %.2f m%s",
+                    hand ? "right" : "left", jump ? " JUMP" : "", s.roll / kRad, rawRead / kRad, s.rollSense,
+                    rollAlong, rollFlipped ? " FLIPPED" : "", fVert, outward / kRad, shaped / kRad, s.theta / kRad,
+                    thetaBefore / kRad, s.outSense, outAlong, outFlipped ? " FLIPPED" : "", bodyDist,
+                    reliable ? "" : " (no hand pose)");
+        }
+    }
+    if (!s.have)
+        return false;
+    float rs[9];
+    AxisRotation(n, s.theta * s.outSense, rs);
+    VecTimes(zero, rs, side);
+    return true;
+}
+
 // One arm onto its controller. The hand (bones handFirst..handLast) moves rigidly so its centre -- the hand bones'
 // bind-space centroids under their current matrices -- sits on the controller (plus the animation's movement,
 // LayerMove), turned so it keeps the angle to the controller that it had to the game camera. Then two-bone IK: the shoulder stays, the upper arm and forearm turn
@@ -654,6 +858,17 @@ bool ArmToController(float* buffer, int hand, const ArmRig& r)
             AxisRotation(n, swivel * 0.01745329252f * (Dot3(cr, n) >= 0.0f ? 1.0f : -1.0f), rs);
             VecTimes(side, rs, side);
         }
+    }
+    // The natural elbow model (ElbowFromModel), when on, gives the elbow's side instead of the above. The hand's
+    // distance from the body: across from the line straight down from the head (the game camera; model y = the body's
+    // down), the wrist where the arm reaches it.
+    {
+        float head[3];
+        PointTimes(camPos, winv, head);
+        const float bx = wrist2[0] - head[0], bz = wrist2[2] - head[2];
+        float modelSide[3];
+        if (ElbowFromModel(hand, r, buffer, winv, n, std::sqrt(bx * bx + bz * bz), modelSide, firstLog))
+            std::memcpy(side, modelSide, sizeof(modelSide));
     }
     float elbow2[3];
     for (int k = 0; k < 3; ++k)

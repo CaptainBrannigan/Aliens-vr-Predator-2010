@@ -85,7 +85,7 @@ The controllers act as an Xbox pad for the game; every action can be rebound in 
 | Grips | LB / RB (the left grip on the Marine's gun barrel is the two-handed grab instead) |
 | A / B / X / Y | A / B / X / Y |
 | Double press X / Y / B / A | D-pad left / up / right / down |
-| Hold the left / right thumbrest (0.8 s) | Back / Start |
+| Double tap the left / right thumbrest | Back / Start |
 | Touch both thumbrests at once | Recenter the view |
 
 ### Settings menu

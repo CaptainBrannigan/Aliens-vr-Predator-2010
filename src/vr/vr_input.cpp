@@ -29,12 +29,14 @@ struct PadAction
     const char* defaultPath;  // oculus_touch input, nullptr = unbound by default
     const char* defaultMode;  // "button" / "joystick"
     const char* defaultInput; // "click", "double" (double press), "long" (long press), "touch"
-    unsigned holdMs = 0;      // > 0: the pad button only once the action has been held this long (timed here)
+    bool doubleTap = false;   // the pad button on a double tap of the input (timed here, Update)
 };
-// Start / Back on a held right / left thumbrest (2026-10-17 Start, replacing MOHW's long Y; 2026-10-18 Back): the
-// thumbrest is touch-only and SteamVR's long press needs a click, so the hold is timed here. Both thumbrests touched
-// together recenter instead (Update). The bumpers are the grips (2026-10-18; they were the thumbrests' touch).
-constexpr unsigned kStartHoldMs = 800;
+// Start / Back on a double tap of the right / left thumbrest (2026-10-21; first a 0.8 s hold, which a resting thumb
+// set off). The thumbrest is touch-only and SteamVR's double press needs a click, so the taps are timed here: a tap = a
+// touch shorter than kTapMaxMs after at least kTapGapMs off the rest (a resting thumb's flicker doesn't count), the
+// second within kDoubleTapMs of the first. Both thumbrests touched together recenter instead (Update). The bumpers are
+// the grips (2026-10-18; they were the thumbrests' touch). Action names stay "StartHold" / "BackHold" (permanent).
+constexpr ULONGLONG kTapMaxMs = 300, kTapGapMs = 40, kDoubleTapMs = 450, kTapPressMs = 150;
 constexpr ULONGLONG kBothRestsMs = 300; // both thumbrests touched within this of each other = together
 const PadAction kPadActions[] = {
     {"A", "A", 0x1000, "/user/hand/right/input/a", "button", "click"},
@@ -48,10 +50,9 @@ const PadAction kPadActions[] = {
     {"DpadLeft", "D-pad left", 0x0004, "/user/hand/left/input/x", "button", "double"},
     {"DpadRight", "D-pad right", 0x0008, "/user/hand/right/input/b", "button", "double"},
     {"Start", "Start / pause", 0x0010, nullptr, nullptr, nullptr},
-    {"StartHold", "Start / pause (hold 0.8 s)", 0x0010, "/user/hand/right/input/thumbrest", "button", "touch",
-     kStartHoldMs},
+    {"StartHold", "Start / pause (double tap)", 0x0010, "/user/hand/right/input/thumbrest", "button", "touch", true},
     {"Back", "Back", 0x0020, nullptr, nullptr, nullptr},
-    {"BackHold", "Back (hold 0.8 s)", 0x0020, "/user/hand/left/input/thumbrest", "button", "touch", kStartHoldMs},
+    {"BackHold", "Back (double tap)", 0x0020, "/user/hand/left/input/thumbrest", "button", "touch", true},
     {"LB", "Left bumper", 0x0100, "/user/hand/left/input/grip", "button", "click"},
     {"RB", "Right bumper", 0x0200, "/user/hand/right/input/grip", "button", "click"},
 };
@@ -409,7 +410,11 @@ void Update()
     static ULONGLONG heldUntil[kPadActionCount] = {};
     const ULONGLONG now = GetTickCount64();
     unsigned buttons = 0;
-    static ULONGLONG downSince[kPadActionCount] = {};
+    // Double taps (doubleTap actions): the current touch's start, the last release, the last tap's start (0 = none
+    // pending), and the press's end once a double tap fired.
+    static ULONGLONG touchSince[kPadActionCount] = {}, releasedAt[kPadActionCount] = {},
+                     tapAt[kPadActionCount] = {}, pressUntil[kPadActionCount] = {};
+    static bool wasTouched[kPadActionCount] = {};
     // Both thumbrests touched together (the second within kBothRestsMs of the first): recenter, and that touch holds
     // neither Back nor Start (until both are let go).
     static const int kRestAction[2] = {PadActionIndex("BackHold"), PadActionIndex("StartHold")}; // left, right
@@ -426,6 +431,9 @@ void Update()
         restsRecentered = true;
         stereo::RequestRecenter();
         AVP_LOG(kLog, "both thumbrests touched: recenter");
+        for (int idx : kRestAction)
+            if (idx >= 0)
+                tapAt[idx] = pressUntil[idx] = 0; // these touches aren't taps
     }
     if (!restSince[0] && !restSince[1])
         restsRecentered = false;
@@ -434,13 +442,37 @@ void Update()
         bool down = Digital(g_pad[i]);
         if (restsRecentered && (i == kRestAction[0] || i == kRestAction[1]))
             down = false;
-        if (kPadActions[i].holdMs)
+        if (kPadActions[i].doubleTap)
         {
+            const bool touched = down;
+            if (touched && !wasTouched[i]) // a touch starts
+            {
+                const bool afterGap = !releasedAt[i] || now - releasedAt[i] >= kTapGapMs;
+                if (tapAt[i] && afterGap && now - tapAt[i] <= kDoubleTapMs)
+                {
+                    pressUntil[i] = now + kTapPressMs;
+                    tapAt[i] = 0;
+                    touchSince[i] = 0; // this touch completed the double tap: it doesn't start another
+                    AVP_LOG(kLog, "double tap: %s", kPadActions[i].label);
+                }
+                else
+                    touchSince[i] = afterGap ? now : 0; // a flicker's touch isn't a tap
+            }
+            else if (!touched && wasTouched[i]) // released
+            {
+                releasedAt[i] = now;
+                if (touchSince[i] && now - touchSince[i] <= kTapMaxMs && !pressUntil[i])
+                    tapAt[i] = touchSince[i]; // a short touch: the first tap
+                else if (now - tapAt[i] > kDoubleTapMs)
+                    tapAt[i] = 0;
+                touchSince[i] = 0;
+            }
+            if (tapAt[i] && now - tapAt[i] > kDoubleTapMs)
+                tapAt[i] = 0; // the second tap didn't come
+            wasTouched[i] = touched;
+            down = now < pressUntil[i];
             if (!down)
-                downSince[i] = 0;
-            else if (!downSince[i])
-                downSince[i] = now;
-            down = down && now - downSince[i] >= kPadActions[i].holdMs;
+                pressUntil[i] = 0;
         }
         if (down && now >= heldUntil[i])
             heldUntil[i] = now + kPadMinHoldMs;

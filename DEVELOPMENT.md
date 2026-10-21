@@ -40,7 +40,7 @@ the heap, everything else inside system DLLs (d3d11, dxgi, xinput1_3, binkw32) o
 ## Version history
 
 **Beta (2026-10-18)**
-- Grips are the bumpers; hold the left thumbrest for Back, the right for Start; both thumbrests together recenter. The
+- Grips are the bumpers; double-tap the left thumbrest for Back, the right for Start; both thumbrests together recenter. The
   left grip doesn't press LB while the left hand is at the Marine's gun (two-handed grab).
 - The hands take the game's animation on top of the controllers (attacks, reloads, recoil; setting "Hands also move
   with the game's animation"); the Marine's gun moves with the right hand.

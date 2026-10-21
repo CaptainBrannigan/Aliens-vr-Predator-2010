@@ -33,7 +33,7 @@ build verification, log-only trace hooks, game-state snapshots; the Steam CEG co
   hidden; pause menu, cutscenes, movies and loading on a flat virtual screen.
 
 **Goal 4 — motion controls (pad and head aim done):** SteamVR Input actions -> virtual XInput pad 0 (hook inside
-xinput1_3.dll), generated manifest + Touch bindings; grips = bumpers, held left / right thumbrest = Back / Start, both thumbrests = recenter (Beta).
+xinput1_3.dll), generated manifest + Touch bindings; grips = bumpers, double-tapped left / right thumbrest = Back / Start, both thumbrests = recenter (Beta).
 Head aim for all species through the look controller's SetLookDirection (`src/vr/head_aim.*`): a player frame
 (body vertical + own heading, right-stick turning), per-species aim offsets, local player only.
 
