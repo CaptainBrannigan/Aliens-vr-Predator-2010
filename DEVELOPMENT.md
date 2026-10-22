@@ -39,8 +39,16 @@ the heap, everything else inside system DLLs (d3d11, dxgi, xinput1_3, binkw32) o
 
 ## Version history
 
+**1.0 (2026-10-22)**
+- Natural elbow model: the elbows follow the wrist's roll (from the aim pose, about the forearm), through soft-knee
+  curves per side; only the inward one tightens as the hand comes in toward the body. Settings in the Hands group.
+- Thumbrests: double tap for Back / Start (timed in the mod; a resting thumb doesn't trigger them).
+- Debug toggle for a per-frame elbow model log.
+- Built-in defaults = the author's tuned values per class and per weapon (kSpeciesDefaults, kWeaponDefaults); a new
+  class or weapon always starts from its own.
+
 **Beta (2026-10-18)**
-- Grips are the bumpers; double-tap the left thumbrest for Back, the right for Start; both thumbrests together recenter. The
+- Grips are the bumpers; hold the left thumbrest for Back, the right for Start; both thumbrests together recenter. The
   left grip doesn't press LB while the left hand is at the Marine's gun (two-handed grab).
 - The hands take the game's animation on top of the controllers (attacks, reloads, recoil; setting "Hands also move
   with the game's animation"); the Marine's gun moves with the right hand.

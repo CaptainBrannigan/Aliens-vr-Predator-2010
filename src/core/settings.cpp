@@ -79,7 +79,7 @@ const Entry kEntries[] = {
     {"ArmsFollowControllers", "Hands", "Arms follow the controllers (Marine, Predator)", Kind::Toggle, 1.0f, 0, 0, 0,
      0, "", nullptr},
     {"SpeciesProfile", "Hands", "Body and hand values below are for", Kind::Info, 0, 0, 0, 0, 0, "", nullptr},
-    {"BodyForward", "Hands", "Body (shoulders) forward", Kind::Number, 0.10f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
+    {"BodyForward", "Hands", "Body (shoulders) forward", Kind::Number, 0.06f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
     {"BodyUp", "Hands", "Body (shoulders) up", Kind::Number, -0.13f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
     {"StomachTurn", "Hands", "Torso turn from the stomach (+ right)", Kind::Number, -15.0f, -90.0f, 90.0f, 1.0f, 0,
      "deg", nullptr},
@@ -87,18 +87,18 @@ const Entry kEntries[] = {
      nullptr},
     {"ElbowRollModel", "Hands", "Elbows follow the wrist's roll (natural model)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
      nullptr},
-    {"ElbowFollowRoll", "Hands", "Elbow: how much it follows the wrist's roll", Kind::Number, 0.5f, 0.0f, 1.0f, 0.05f,
+    {"ElbowFollowRoll", "Hands", "Elbow: how much it follows the wrist's roll", Kind::Number, 0.75f, 0.0f, 1.0f, 0.05f,
      2, "", nullptr},
-    {"ElbowInKnee", "Hands", "Elbow inward: follows exactly up to", Kind::Number, 30.0f, 0.0f, 150.0f, 1.0f, 0, "deg",
+    {"ElbowInKnee", "Hands", "Elbow inward: follows exactly up to", Kind::Number, 10.0f, 0.0f, 150.0f, 1.0f, 0, "deg",
      nullptr},
-    {"ElbowInMax", "Hands", "Elbow inward: at most", Kind::Number, 60.0f, 0.0f, 170.0f, 1.0f, 0, "deg", nullptr},
-    {"ElbowInNearBody", "Hands", "Elbow inward with the hand near the body", Kind::Number, 0.25f, 0.0f, 1.0f, 0.05f, 2,
+    {"ElbowInMax", "Hands", "Elbow inward: at most", Kind::Number, 25.0f, 0.0f, 170.0f, 1.0f, 0, "deg", nullptr},
+    {"ElbowInNearBody", "Hands", "Elbow inward with the hand near the body", Kind::Number, 0.5f, 0.0f, 1.0f, 0.05f, 2,
      "x", nullptr},
-    {"ElbowOutKnee", "Hands", "Elbow outward: follows exactly up to", Kind::Number, 60.0f, 0.0f, 150.0f, 1.0f, 0,
+    {"ElbowOutKnee", "Hands", "Elbow outward: follows exactly up to", Kind::Number, 100.0f, 0.0f, 150.0f, 1.0f, 0,
      "deg", nullptr},
-    {"ElbowOutMax", "Hands", "Elbow outward: at most", Kind::Number, 110.0f, 0.0f, 170.0f, 1.0f, 0, "deg", nullptr},
-    {"ElbowSmoothingMs", "Hands", "Elbow smoothing", Kind::Number, 80.0f, 0.0f, 300.0f, 10.0f, 0, "ms", nullptr},
-    {"LayerAnimation", "Hands", "Hands also move with the game's animation", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
+    {"ElbowOutMax", "Hands", "Elbow outward: at most", Kind::Number, 130.0f, 0.0f, 170.0f, 1.0f, 0, "deg", nullptr},
+    {"ElbowSmoothingMs", "Hands", "Elbow smoothing", Kind::Number, 50.0f, 0.0f, 300.0f, 10.0f, 0, "ms", nullptr},
+    {"LayerAnimation", "Hands", "Hands also move with the game's animation", Kind::Toggle, 0.0f, 0, 0, 0, 0, "",
      nullptr},
     {"GunOnRightController", "Weapon", "Gun on the right controller (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
      nullptr},
@@ -257,28 +257,35 @@ Profile* FindProfile(ProfileSet& s, const std::string& key)
     return nullptr;
 }
 
-// The classes' own built-in defaults where they differ from the entries' (the Marine's): the user's tuned values,
-// 2026-10-18. A class seen for the first time starts from these.
-struct SpeciesDefault
+// Built-in profile defaults where they differ from the entries' (the Marine's): the user's tuned values (2026-10-18,
+// updated for 1.0 on 2026-10-22). A class or weapon seen for the first time starts from these.
+struct ProfileDefault
 {
-    const char* species;
+    const char* key; // the class's name / the weapon's mesh id
     int index;
     float value;
 };
-constexpr SpeciesDefault kSpeciesDefaults[] = {
-    {"Predator", kRoomScaleStepCm, 30.0f},  {"Predator", kRoomScaleStepSpeed, 0.3f},
+constexpr ProfileDefault kSpeciesDefaults[] = {
+    {"Predator", kRoomScaleStepCm, 30.0f},    {"Predator", kRoomScaleStepSpeed, 0.3f},
     {"Predator", kEyeFovBetweenFrames, 0.0f}, {"Predator", kHudDistanceCm, 30.0f},
-    {"Predator", kHudHeightDeg, -10.0f},    {"Predator", kLookOffsetUp, -13.25f},
-    {"Predator", kBodyForward, 0.09f},      {"Predator", kBodyUp, -0.01f},
-    {"Predator", kStomachTurn, 0.0f},       {"Predator", kElbowSwivel, -20.0f},
-    {"Predator", kHandForward, 0.5f},       {"Predator", kHandPitch, -86.0f},
+    {"Predator", kHudHeightDeg, -10.0f},      {"Predator", kLookOffsetUp, -13.25f},
+    {"Predator", kBodyForward, 0.09f},        {"Predator", kBodyUp, -0.01f},
+    {"Predator", kStomachTurn, 0.0f},         {"Predator", kElbowSwivel, -20.0f},
+    {"Predator", kElbowFollowRoll, 0.5f},     {"Predator", kElbowInKnee, 30.0f},
+    {"Predator", kElbowInMax, 60.0f},         {"Predator", kElbowInNearBody, 0.25f},
+    {"Predator", kElbowOutKnee, 60.0f},       {"Predator", kElbowOutMax, 110.0f},
+    {"Predator", kElbowSmoothingMs, 80.0f},   {"Predator", kLayerAnimation, 1.0f},
+    {"Predator", kHandForward, 0.5f},         {"Predator", kHandPitch, -86.0f},
     {"Predator", kHandYaw, 25.0f},
-    {"Alien", kRoomScaleStepCm, 30.0f},     {"Alien", kRoomScaleStepSpeed, 0.3f},
-    {"Alien", kEyeFovBetweenFrames, 0.0f},  {"Alien", kHudWidthDeg, 78.0f},
-    {"Alien", kHudDistanceCm, 150.0f},      {"Alien", kHudHeightDeg, -15.0f},
-    {"Alien", kLookOffsetUp, 0.0f},         {"Alien", kBodyForward, 0.13f},
-    {"Alien", kBodyUp, -0.03f},             {"Alien", kStomachTurn, 0.0f},
+    {"Alien", kRoomScaleStepCm, 30.0f},       {"Alien", kRoomScaleStepSpeed, 0.3f},
+    {"Alien", kEyeFovBetweenFrames, 0.0f},    {"Alien", kHudWidthDeg, 78.0f},
+    {"Alien", kHudDistanceCm, 150.0f},        {"Alien", kHudHeightDeg, -15.0f},
+    {"Alien", kLookOffsetUp, 0.0f},           {"Alien", kBodyForward, 0.13f},
+    {"Alien", kBodyUp, -0.03f},               {"Alien", kStomachTurn, 0.0f},
     {"Alien", kElbowSwivel, 0.0f},
+};
+constexpr ProfileDefault kWeaponDefaults[] = {
+    {"m10_2305_197", kShotOriginRight, -0.6f},
 };
 
 Profile& ProfileFor(ProfileSet& s, const std::string& key)
@@ -291,8 +298,12 @@ Profile& ProfileFor(ProfileSet& s, const std::string& key)
     {
         float v = kEntries[slot].defaultValue;
         if (&s == &g_speciesSet)
-            for (const SpeciesDefault& d : kSpeciesDefaults)
-                if (d.index == slot && key == d.species)
+            for (const ProfileDefault& d : kSpeciesDefaults)
+                if (d.index == slot && key == d.key)
+                    v = d.value;
+        if (&s == &g_weaponSet)
+            for (const ProfileDefault& d : kWeaponDefaults)
+                if (d.index == slot && key == d.key)
                     v = d.value;
         p.v.push_back(v);
     }
@@ -690,11 +701,10 @@ void SwitchProfileLocked(ProfileSet& s, const char* key, const char* name)
     if (s.key == key)
         return;
     StoreCurrentLocked(s); // the previous profile's values kept
-    const bool hadOne = !s.key.empty();
     const bool known = FindProfile(s, key) != nullptr;
     s.key = key;
-    // A class: its own built-in defaults even as the first profile (kSpeciesDefaults).
-    const bool fresh = (hadOne || &s == &g_speciesSet) && !s.newFromCurrent;
+    // A class or a weapon: its own built-in defaults even as the first profile (kSpeciesDefaults, kWeaponDefaults).
+    const bool fresh = !s.newFromCurrent;
     if (known || fresh)
     {
         // Its own values, or the defaults the first time.
@@ -702,7 +712,6 @@ void SwitchProfileLocked(ProfileSet& s, const char* key, const char* name)
         for (size_t j = 0; j < s.slots.size(); ++j)
             g_values[s.slots[j]].store(p.v[j], std::memory_order_relaxed);
     }
-    // (None before -- the first one after an update without these profiles -- keeps the values as they are.)
     AVP_LOG(kLog, "%s profile: %s (%s), %s", s.prefix, key, name,
             known ? "its own values" : fresh ? "new: the defaults" : "new: the current values");
     WriteFileLocked();

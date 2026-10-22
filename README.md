@@ -5,8 +5,8 @@ This mod is a proxy `dxgi.dll` that hooks the game's rendering and input and tal
 the game: stereo 3D for all three species, head-tracked look and movement, the Marine's gun and the arms of the
 Marine and the Predator on your motion controllers, and an in-headset settings menu.
 
-**Status: Beta, a hobby reverse-engineering project.** It's playable, but there are rough edges; see
-[Known issues](#known-issues) and [Planned](#planned).
+**Status: 1.0, a hobby reverse-engineering project.** Everything listed below works; see
+[Known issues](#known-issues) and [Planned](#planned) for what isn't done yet.
 
 ## Requirements
 
@@ -64,10 +64,12 @@ To remove the mod, delete `dxgi.dll` from the game folder.
 
 ### Motion controllers
 - **Arms on your hands** (Marine and Predator): each hand sits on its controller and the arms bend to reach it
-  (two-bone IK). The body position, torso turn and elbow angle are adjustable per species, and the hand calibration
-  (offset and rotation) is one set, mirrored for the left hand.
-- **The game's animations play on top:** attacks, reloads and recoil still move your hands from where the
-  controllers hold them (can be switched off).
+  (two-bone IK). **The elbows follow the roll of your wrists** the way real ones do: palm down swings them out, palm
+  up brings them in, less so the closer your hand is to your body. The body position, torso turn and the elbow
+  model are adjustable per species, and the hand calibration (offset and rotation) is one set, mirrored for the left
+  hand.
+- **The game's animations can play on top:** attacks, reloads and recoil move your hands from where the controllers
+  hold them (on for the Predator; off by default for the Marine, whose gun it would sway).
 - **The Marine's gun is in your right hand, and shots leave the gun** along its barrel, independent of where you
   look. Each weapon keeps its own grip and shot-line calibration; weapons are recognised automatically.
 - **Laser sight** along the shot line, for calibrating (off by default; it shows through walls).
