@@ -78,6 +78,7 @@ const Entry kEntries[] = {
      2, "deg", nullptr},
     {"ArmsFollowControllers", "Hands", "Arms follow the controllers (Marine, Predator)", Kind::Toggle, 1.0f, 0, 0, 0,
      0, "", nullptr},
+    {"LeftHanded", "Hands", "Left-handed (arms, gun, triggers, grips)", Kind::Toggle, 0.0f, 0, 0, 0, 0, "", nullptr},
     {"SpeciesProfile", "Hands", "Body and hand values below are for", Kind::Info, 0, 0, 0, 0, 0, "", nullptr},
     {"BodyForward", "Hands", "Body (shoulders) forward", Kind::Number, 0.06f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
     {"BodyUp", "Hands", "Body (shoulders) up", Kind::Number, -0.13f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
@@ -100,7 +101,7 @@ const Entry kEntries[] = {
     {"ElbowSmoothingMs", "Hands", "Elbow smoothing", Kind::Number, 50.0f, 0.0f, 300.0f, 10.0f, 0, "ms", nullptr},
     {"LayerAnimation", "Hands", "Hands also move with the game's animation", Kind::Toggle, 0.0f, 0, 0, 0, 0, "",
      nullptr},
-    {"GunOnRightController", "Weapon", "Gun on the right controller (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
+    {"GunOnRightController", "Weapon", "Gun on the controller (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
      nullptr},
     {"WeaponProfile", "Weapon", "Gun and shot values below are for", Kind::Info, 0, 0, 0, 0, 0, "", nullptr},
     {"GunOffsetRight", "Weapon", "Gun offset right", Kind::Number, 0.0f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
@@ -109,7 +110,7 @@ const Entry kEntries[] = {
     {"GunPitch", "Weapon", "Gun pitch (+ up)", Kind::Number, -60.0f, -180.0f, 180.0f, 1.0f, 0, "deg", nullptr},
     {"GunYaw", "Weapon", "Gun yaw (+ right)", Kind::Number, 0.0f, -180.0f, 180.0f, 1.0f, 0, "deg", nullptr},
     {"GunRoll", "Weapon", "Gun roll", Kind::Number, 0.0f, -180.0f, 180.0f, 1.0f, 0, "deg", nullptr},
-    {"TwoHandedAim", "Weapon", "Two-handed aim (left grip on the gun)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
+    {"TwoHandedAim", "Weapon", "Two-handed aim (off-hand grip on the gun)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"TwoHandGrabRadius", "Weapon", "Two-handed: grab distance from the barrel", Kind::Number, 15.0f, 5.0f, 40.0f, 1.0f,
      0, "cm", nullptr},
     {"TwoHandReach", "Weapon", "Two-handed: reach along the barrel", Kind::Number, 80.0f, 20.0f, 120.0f, 1.0f, 0, "cm",
@@ -120,6 +121,7 @@ const Entry kEntries[] = {
      nullptr},
     {"ShotsFromGun", "Aiming", "Shots from the gun (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"LaserSight", "Aiming", "Laser along the shots", Kind::Toggle, 0.0f, 0, 0, 0, 0, "", nullptr},
+    {"MuzzleFlashOnGun", "Aiming", "Muzzle flash on the gun (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"ShotOriginRight", "Aiming", "Shot origin right", Kind::Number, -0.7f, -30.0f, 30.0f, 0.1f, 1, "cm", nullptr},
     {"ShotOriginUp", "Aiming", "Shot origin up", Kind::Number, 11.0f, -30.0f, 30.0f, 0.1f, 1, "cm", nullptr},
     {"ShotOriginForward", "Aiming", "Shot origin forward", Kind::Number, 12.0f, -30.0f, 60.0f, 0.1f, 1, "cm", nullptr},
@@ -169,6 +171,7 @@ enum Index
     kLookOffsetUp,
     kLookOffsetRight,
     kArmsFollowControllers,
+    kLeftHanded,
     kSpeciesProfile,
     kBodyForward,
     kBodyUp,
@@ -198,6 +201,7 @@ enum Index
     kSecondaryGripUp,
     kShotsFromGun,
     kLaserSight,
+    kMuzzleFlashOnGun,
     kShotOriginRight,
     kShotOriginUp,
     kShotOriginForward,
@@ -343,7 +347,7 @@ int SlotIn(const ProfileSet& s, const char* key)
 
 void SwitchProfileLocked(ProfileSet& s, const char* key, const char* name);
 
-// The species set holds every entry the weapon set doesn't, except the Info rows and the Debug group.
+// The species set holds every entry the weapon set doesn't, except the Info rows, the Debug group and the player's hand.
 void InitSets()
 {
     if (!g_speciesSet.slots.empty())
@@ -353,7 +357,7 @@ void InitSets()
         bool weapon = false;
         for (int w : g_weaponSet.slots)
             weapon = weapon || w == i;
-        if (!weapon && kEntries[i].kind != Kind::Info && std::strcmp(kEntries[i].group, "Debug") != 0)
+        if (!weapon && i != kLeftHanded && kEntries[i].kind != Kind::Info && std::strcmp(kEntries[i].group, "Debug") != 0)
             g_speciesSet.slots.push_back(i);
     }
 }
@@ -624,6 +628,8 @@ float TurnSpeed() { return g_values[kTurnSpeed].load(std::memory_order_relaxed);
 bool GunOnRightController() { return g_values[kGunOnRightController].load(std::memory_order_relaxed) != 0.0f; }
 bool ShotsFromGun() { return g_values[kShotsFromGun].load(std::memory_order_relaxed) != 0.0f; }
 bool LaserSight() { return g_values[kLaserSight].load(std::memory_order_relaxed) != 0.0f; }
+bool MuzzleFlashOnGun() { return g_values[kMuzzleFlashOnGun].load(std::memory_order_relaxed) != 0.0f; }
+bool LeftHanded() { return g_values[kLeftHanded].load(std::memory_order_relaxed) != 0.0f; }
 bool TwoHandedAim() { return g_values[kTwoHandedAim].load(std::memory_order_relaxed) != 0.0f; }
 void TwoHandParams(float* grabRadius, float* reach, float grip[2])
 {

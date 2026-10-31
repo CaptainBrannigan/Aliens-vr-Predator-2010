@@ -34,15 +34,15 @@ void OnDraw(ID3D11DeviceContext* ctx, int pass, unsigned drawNo, unsigned indexC
 void OnPresent(ID3D11DeviceContext* ctx);
 
 // The Marine's weapon placement as a world -> world move (row vectors, v' = v * m): from the game's weapon model (as
-// last drawn) onto the right controller with the gun offsets, from the controller's current pose -- the same move the
+// last drawn) onto its controller (the right, or the left with LeftHanded) with the gun offsets, from that pose -- the same move the
 // drawn weapon gets (GunOnRightController). For shots from the gun (vr/shots.h). False when no first-person weapon was
 // drawn in the last half second or there's no controller pose. Same thread as the game's update (it renders there).
 // placedOrigin (optional) = the placed weapon model's origin (the controller + the gun offsets; at the hand).
 // The weapon = a first-person model whose origin is at one of the game's own hands (props passing close by aren't).
 bool GunPlacement(float m[16], float placedOrigin[3] = nullptr);
 
-// The Marine's left palm is in the two-handed grab zone on the gun (or holds it): the left grip is the grab there, so
-// the XInput hook drops the left bumper it also presses. Any thread.
+// The Marine's off-hand palm is in the two-handed grab zone on the gun (or holds it): that grip is the grab there, so
+// the XInput hook drops the left bumper it also presses (LeftHanded swaps the bumpers with the hands). Any thread.
 bool LeftGripOnGun();
 
 } // namespace avp::fp

@@ -3,6 +3,7 @@
 #include "head_aim.h"
 #include "opaque_pass.h"
 #include "openvr_session.h"
+#include "shots.h"
 #include "vr_input.h"
 #include "../core/addresses.h"
 #include "../core/dev_flags.h"
@@ -626,6 +627,7 @@ bool EnsureTextures(ID3D11Device* device, ID3D11Resource* backBuffer)
 void __fastcall CamApplyReplacement(void* self, void* /*edx*/, void* entity)
 {
     OriginalCamApply(self, entity);
+    shots::OnCameraApply();
     {
         // Which camera component applies (2026-10-18: an Alien sequence after an X press -- no movie, pause or
         // cinematic flag -- rendered into the HUD panel's box; is it another camera?). Its shadow vtable names the

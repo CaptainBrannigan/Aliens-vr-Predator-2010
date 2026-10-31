@@ -11,6 +11,11 @@
 // drawn weapon on the controller (hooks/first_person.h GunPlacement) plus the shot angle offsets. The laser
 // (vr/laser.h) shows the same line. Other characters (AI, other players) are untouched.
 //
+// The muzzle flash is a particle effect that spawns at that position, then follows a socket of the game's model through
+// an attachment node (FINDINGS section 13); those sockets don't know about the drawn gun, which is moved in the bone
+// buffer only. With MuzzleFlashOnGun on, every effect node on the muzzle socket is pinned to the shots' origin each
+// frame, through the flags that stop the game writing the node. Data writes only.
+//
 // Log: avpvr_shots.log.
 
 namespace avp::shots {
@@ -21,5 +26,8 @@ void Register();
 // From head aim's look update (main thread, after the game's own), once per frame: the laser along the shots' line,
 // from the look the game was just given (the direction a shot would get).
 void OnLook(void* character, const float look[3]);
+
+// From the camera apply (main thread, before the scene is submitted): the muzzle effects onto the gun.
+void OnCameraApply();
 
 } // namespace avp::shots

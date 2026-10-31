@@ -70,12 +70,169 @@ bool IsLocalMarine(void* character)
     return character && character == aim::LocalCharacter() && Global<int>(addr::g_PlayerSpecies) == 2;
 }
 
+// ---- The muzzle flash (see shots.h) ----
+
+constexpr int kMaxBarrels = 4;
+constexpr int kMaxModelDepth = 4; // the character's model, the held gun, what hangs off that
+constexpr int kMaxNodes = 256;
+constexpr int kMaxSeen = 12;
+constexpr int kFramesLoggedAfterShot = 3;
+
+uint32_t g_muzzleHash[kMaxBarrels]; // the socket of each barrel of the weapon that fired last
+int g_muzzleHashes = 0;
+void* g_flashCharacter = nullptr; // the local Marine, set by this frame's look update and taken by the camera apply
+float g_flashLook[3];
+int g_flashLogFrames = 0;
+
+struct SeenNode
+{
+    uint32_t vtable, hash;
+    int depth;
+};
+
+struct FlashWalk
+{
+    float pos[3], quat[4];
+    int budget, moved, seen;
+    SeenNode node[kMaxSeen];
+};
+
+template <typename T>
+T Read(uintptr_t a)
+{
+    return *reinterpret_cast<const T*>(a);
+}
+
+// Called before the effects of a shot spawn, while the weapon is known to be alive.
+void RememberMuzzle(void* weapon, void* character)
+{
+    __try
+    {
+        const auto w = reinterpret_cast<uintptr_t>(weapon);
+        const auto comp = Read<uintptr_t>(reinterpret_cast<uintptr_t>(character) + addr::kCharComp);
+        const auto effects = Read<uintptr_t>(w + addr::kWeaponEffects);
+        if (!comp || !effects)
+            return;
+        const auto data = Read<uintptr_t>(effects + 4);
+        if (!data)
+            return;
+        const bool firstPerson = (Read<uint32_t>(comp + addr::kCompFlags) >> 2 & 1) != 0;
+        int barrels = static_cast<int>(Read<uint32_t>(w + addr::kWeaponBarrelCount) & 0xF);
+        if (barrels > kMaxBarrels)
+            barrels = kMaxBarrels;
+        for (int b = 0; b < barrels; ++b)
+            g_muzzleHash[b] = Read<uint32_t>(data + b * addr::kEffectDataStride +
+                                             (firstPerson ? addr::kEffectDataHashFp : addr::kEffectDataHash3p));
+        g_muzzleHashes = barrels;
+        g_flashLogFrames = kFramesLoggedAfterShot;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        g_muzzleHashes = 0;
+    }
+}
+
+uint32_t NodeSocketHash(uintptr_t model, uintptr_t node)
+{
+    const uint32_t which = Read<uint32_t>(node + addr::kNodeSkeleton);
+    const int socket = Read<int>(node + addr::kNodeSocket);
+    if (which > 2 || socket < 0)
+        return 0;
+    const auto skeleton = Read<uintptr_t>(model + addr::kModelSkeletons + which * 4);
+    if (!skeleton || socket >= Read<int>(skeleton + 0x40))
+        return 0;
+    return Read<uint32_t>(Read<uintptr_t>(skeleton + 0x44) + socket * addr::kSocketStride + addr::kSocketHash);
+}
+
+void WalkModel(uintptr_t model, int depth, FlashWalk& w)
+{
+    using PFN_ChildModel = uintptr_t(__thiscall*)(uintptr_t node);
+    for (auto node = Read<uintptr_t>(model + addr::kModelAttachments); node && w.budget > 0;
+         node = Read<uintptr_t>(node + addr::kNodeNext))
+    {
+        --w.budget;
+        const auto vtable = Read<uintptr_t>(node);
+        const uint32_t hash = NodeSocketHash(model, node);
+        if (w.seen < kMaxSeen)
+            w.node[w.seen++] = {static_cast<uint32_t>(vtable), hash, depth};
+        if (vtable != addr::vt_EffectAttachment)
+        {
+            const auto child = reinterpret_cast<PFN_ChildModel>(Read<uintptr_t>(vtable + addr::kNodeChildModelSlot))(node);
+            if (child && child != model && depth < kMaxModelDepth)
+                WalkModel(child, depth + 1, w);
+            continue;
+        }
+        bool muzzle = false;
+        for (int i = 0; i < g_muzzleHashes; ++i)
+            muzzle = muzzle || (hash != 0 && hash == g_muzzleHash[i]);
+        if (!muzzle)
+            continue;
+        *reinterpret_cast<uint32_t*>(node + addr::kNodeFlags) |= addr::kNodeFixedPos | addr::kNodeFixedRot;
+        std::memcpy(reinterpret_cast<void*>(node + addr::kNodePos), w.pos, sizeof(w.pos));
+        std::memcpy(reinterpret_cast<void*>(node + addr::kNodeQuat), w.quat, sizeof(w.quat));
+        ++w.moved;
+    }
+}
+
+bool WalkCharacter(void* character, FlashWalk& w)
+{
+    __try
+    {
+        const auto comp = Read<uintptr_t>(reinterpret_cast<uintptr_t>(character) + addr::kCharComp);
+        const uintptr_t model = comp ? Read<uintptr_t>(comp + addr::kCompModel) : 0;
+        if (!model)
+            return false;
+        WalkModel(model, 0, w);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
+}
+
+// The effect's orientation, as the game makes it from a direction (00641530): column 2 = dir, column 0 level. As a
+// quaternion (x y z w) the way 0042B600 reads one.
+void DirectionToQuat(const float d[3], float q[4])
+{
+    float x[3] = {d[2], 0.0f, -d[0]};
+    const float len = std::sqrt(x[0] * x[0] + x[2] * x[2]);
+    if (len > 1e-6f)
+        x[0] /= len, x[2] /= len;
+    else
+        x[0] = 1.0f, x[2] = 0.0f;
+    const float y[3] = {d[1] * x[2] - d[2] * x[1], d[2] * x[0] - d[0] * x[2], d[0] * x[1] - d[1] * x[0]};
+    const float m[9] = {x[0], y[0], d[0], x[1], y[1], d[1], x[2], y[2], d[2]};
+    const float t = m[0] + m[4] + m[8];
+    if (t > 0.0f)
+    {
+        const float s = std::sqrt(t + 1.0f) * 2.0f;
+        q[0] = (m[7] - m[5]) / s, q[1] = (m[2] - m[6]) / s, q[2] = (m[3] - m[1]) / s, q[3] = s * 0.25f;
+    }
+    else if (m[0] >= m[4] && m[0] >= m[8])
+    {
+        const float s = std::sqrt(1.0f + m[0] - m[4] - m[8]) * 2.0f;
+        q[0] = s * 0.25f, q[1] = (m[1] + m[3]) / s, q[2] = (m[2] + m[6]) / s, q[3] = (m[7] - m[5]) / s;
+    }
+    else if (m[4] >= m[8])
+    {
+        const float s = std::sqrt(1.0f + m[4] - m[0] - m[8]) * 2.0f;
+        q[0] = (m[1] + m[3]) / s, q[1] = s * 0.25f, q[2] = (m[5] + m[7]) / s, q[3] = (m[2] - m[6]) / s;
+    }
+    else
+    {
+        const float s = std::sqrt(1.0f + m[8] - m[0] - m[4]) * 2.0f;
+        q[0] = (m[2] + m[6]) / s, q[1] = (m[5] + m[7]) / s, q[2] = s * 0.25f, q[3] = (m[3] - m[1]) / s;
+    }
+}
+
 // The fire transform, moved onto the gun on the controller (see shots.h). pos[3], dir[3]; mat = the muzzle's 3x3
 // (columns = its axes; the type-6 weapon fires along column 2), turned the same way for weapons that read it.
 void FromGun(void* weapon, void* character, float* pos, float* dir, float* mat)
 {
     if (!settings::ShotsFromGun() || !IsLocalMarine(character))
         return;
+    RememberMuzzle(weapon, character);
     static DWORD lastLog = 0;
     static int logged = 0;
     const DWORD now = GetTickCount();
@@ -150,6 +307,37 @@ void OnLook(void* character, const float look[3])
         visible = stereo::WorldToTracking(start, ts, head) && stereo::WorldToTracking(end, te);
     }
     laser::Update(visible, ts, te, head);
+    if (settings::MuzzleFlashOnGun() && settings::ShotsFromGun() && g_muzzleHashes > 0 && IsLocalMarine(character))
+    {
+        g_flashCharacter = character;
+        std::memcpy(g_flashLook, look, sizeof(g_flashLook));
+    }
+}
+
+void OnCameraApply()
+{
+    void* character = g_flashCharacter;
+    g_flashCharacter = nullptr;
+    if (!character)
+        return;
+    FlashWalk w{};
+    float dir[3];
+    if (!GunRay(g_flashLook, w.pos, dir))
+        return;
+    DirectionToQuat(dir, w.quat);
+    w.budget = kMaxNodes;
+    const bool walked = WalkCharacter(character, w);
+    if (g_flashLogFrames <= 0)
+        return;
+    --g_flashLogFrames;
+    static int logged = 0;
+    if (logged >= 60)
+        return;
+    ++logged;
+    AVP_LOG(kLog, "flash: %s, %d effect(s) moved to (%.2f %.2f %.2f), muzzle hash %08X, %d node(s) seen",
+            walked ? "walked" : "WALK FAILED", w.moved, w.pos[0], w.pos[1], w.pos[2], g_muzzleHash[0], w.seen);
+    for (int i = 0; i < w.seen; ++i)
+        AVP_LOG(kLog, "flash:   depth %d vtable %08X socket hash %08X", w.node[i].depth, w.node[i].vtable, w.node[i].hash);
 }
 
 void Register()

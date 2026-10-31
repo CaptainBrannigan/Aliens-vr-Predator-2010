@@ -42,6 +42,8 @@ bool GunOnRightController(); // Marine: the first-person weapon model on the rig
 void GunOffset(float off[3], float angles[3]);
 bool ShotsFromGun(); // Marine: shots leave from the gun on the controller, along it (vr/shots.h)
 bool LaserSight();   // a beam along the shots' line (vr/laser.h)
+bool MuzzleFlashOnGun(); // Marine: the muzzle effects stay at the shots' origin on the gun (vr/shots.h)
+bool LeftHanded(); // the arms' animation mirrored, the gun on the left controller, triggers and grips swapped
 // The shots' line on the gun: off = origin right, up, forward from the gun model's origin in its own frame (metres;
 // the settings are cm); angles = pitch (+ up), yaw (+ right) from the barrel, degrees.
 void ShotOffset(float off[3], float angles[2]);

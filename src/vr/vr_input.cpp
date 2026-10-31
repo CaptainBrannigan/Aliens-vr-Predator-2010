@@ -2,6 +2,7 @@
 
 #include "stereo.h"
 #include "../core/log.h"
+#include "../core/settings.h"
 
 #include <windows.h>
 #include <openvr.h>
@@ -530,6 +531,10 @@ void Update()
         if (down || now < heldUntil[i])
             buttons |= kPadActions[i].mask;
     }
+    // Left-handed: the dominant hand keeps the right trigger and bumper (fire, melee).
+    const bool leftHanded = settings::LeftHanded();
+    if (leftHanded)
+        buttons = (buttons & ~0x0300u) | ((buttons & 0x0100u) << 1) | ((buttons & 0x0200u) >> 1);
     bool recenterChanged = false;
     if (Digital(g_recenter, &recenterChanged) && recenterChanged)
         stereo::RequestRecenter();
@@ -547,8 +552,8 @@ void Update()
     g_turnX.store(tx, std::memory_order_relaxed);
     g_turnY.store(ty, std::memory_order_relaxed);
     g_buttons.store(buttons, std::memory_order_relaxed);
-    g_leftTrigger.store(TriggerByte(lt), std::memory_order_relaxed);
-    g_rightTrigger.store(TriggerByte(rt), std::memory_order_relaxed);
+    g_leftTrigger.store(TriggerByte(leftHanded ? rt : lt), std::memory_order_relaxed);
+    g_rightTrigger.store(TriggerByte(leftHanded ? lt : rt), std::memory_order_relaxed);
     g_havePad.store(true, std::memory_order_release);
 
     static unsigned lastButtons = 0;

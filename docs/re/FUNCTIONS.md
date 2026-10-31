@@ -4,7 +4,7 @@ Generated from `avp_symbols.csv` (the source of truth; edit it, then re-run `too
 `tools/ghidra/ApplySymbols.java`).
 Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confidence: high = read from decompile/live; medium = inferred; open = unknown.
 
-124 functions, 43 globals/vtables.
+128 functions, 45 globals/vtables.
 
 ## Camera
 
@@ -142,7 +142,7 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 | `0070E2D0` | func | `Char_SetAimPoint` | high | character vtable+0xBC: writes char+0x5C |
 | `0091FAB8` | data | `vt_LookCtrlBase` | high | Look controller base vtable |
 | `00920D70` | data | `vt_LookCtrlSub` | high | Look controller subclass vtable (3 siblings: 009220F8, 00922E40, 00923C88) |
-| `00A71E14` | data | `g_PlayerProfile` | medium | +0xB5 invert Y, +0xBA/+0xBB assist, +0xCC/+0xD0 sensitivity |
+| `00A71E14` | data | `g_PlayerProfile` | medium | +0xB4 control options: +0xB5 invert Y, +0xBA/+0xBB assist, +0xBE controller option, +0xCC/+0xD0 sensitivity |
 
 ## Input
 
@@ -153,13 +153,14 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 | `006256A0` | func | `Input_PackActionBits` | high | Packs actions 0..32 into a bitmask (net/demo input) |
 | `00644F70` | func | `Input_ClassifyPadName` | high | Pad name -> type (XInput = 5) |
 | `00645750` | func | `Input_EnumPadDevice` | high | DirectInput EnumDevices callback: lists each device, XInput ones with an index |
+| `00645AA0` | func | `XInput_PollPad` | high | XInputGetState -> normalized sticks pad+0x248..0x254, buttons pad+0x258, triggers +0x260/+0x261 |
 | `00645EC0` | func | `XInput_PollPadIfEnabled` | high | Calls XInput_PollPad only if pad+0x244 is set |
 | `00646320` | func | `XInput_EnablePad` | high | thiscall(pad, xinputIndex): sets pad+0x244 and pad+0x25C, names the pad |
-| `0081A800` | func | `Input_CheckPadDevices` | high | Timed: XInputGetCapabilities 0-3, a changed count re-enumerates and takes the first device; sets g_PadInUse from enabled + connected |
-| `00A218B0` | data | `g_Pad` | high | The game's one pad object |
-| `009D4ADF` | data | `g_PadInUse` | high | bool: pad enabled and connected, set by Input_CheckPadDevices |
-| `00645AA0` | func | `XInput_PollPad` | high | XInputGetState -> normalized sticks pad+0x248..0x254, buttons pad+0x258, triggers +0x260/+0x261 |
 | `00659FB0` | func | `XInput_SetRumble` | high | XInputSetState rumble (called from camera shake) |
+| `00817260` | func | `Options_SetGamepad` | high | thiscall(control options, bool): sets the saved controller option (+0x0A) and its copy 00A7201C |
+| `0081A800` | func | `Input_CheckPadDevices` | high | Timed: XInputGetCapabilities 0-3, a changed count re-enumerates and takes the first device; sets g_PadInUse from enabled + connected. Every call: wipes the published pad input while the controller option is off |
+| `009D4ADF` | data | `g_PadInUse` | high | bool cvar AVP.PC.Core.GamePadConnected: pad enabled and connected, set by Input_CheckPadDevices |
+| `00A218B0` | data | `g_Pad` | high | The game's one pad object |
 
 ## Cvar
 
@@ -231,5 +232,5 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 | `007B3110` | func | `RangedWeapon_GetFireTransform` | high | vtable+0xE4: muzzle position/matrix, player dir = look (+0xB0), dist to aim point; RET 0x24 |
 | `007B3D40` | func | `RangedWeapon_Ctor` | high | 'Ranged Weapon' base ctor, vtable 00935E90, flags +0x80 |= 0x80 |
 | `007B4CC0` | func | `RangedWeapon_GetFireTransformCached` | medium | vtable+0xE4 of 009361F0: as 007B3110 with a cached transform at +0x118 |
-| `007B8A00` | func | `Shot_Spawn` | medium | thiscall on weapon+0xD0: picks the shot definition per barrel -> 007B7CD0 (entities at pos, orientation) |
+| `007B8A00` | func | `Shot_Spawn` | medium | thiscall on weapon+0xD0: the weapon's visual effects, not the shot (muzzle flash): per barrel and kind -> 007B7CD0 (effects at pos, orientation, attached to a socket) |
 | `007BBB70` | func | `Weapon_Factory` | high | switch on weapon type -> class ctor; type stored at weapon+0x40 |

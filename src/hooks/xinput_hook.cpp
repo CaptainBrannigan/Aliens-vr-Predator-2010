@@ -175,14 +175,29 @@ void KeepGamePadEnabled()
     if (!input::GetPad(&vr)) // no controllers running: leave the game's own pad handling alone
         return;
     const auto pad = reinterpret_cast<void*>(addr::g_Pad);
-    if (Global<uint8_t>(addr::g_Pad + addr::kPadXInputEnabled) != 0)
-        return;
-    using PFN_EnablePad = void(__thiscall*)(void* self, int xinputIndex);
-    reinterpret_cast<PFN_EnablePad>(addr::XInput_EnablePad)(pad, 0);
-    static int logged = 0;
-    if (logged < 20)
+    if (Global<uint8_t>(addr::g_Pad + addr::kPadXInputEnabled) == 0)
     {
-        AVP_LOG(kLog, "game's pad was off: enabled on XInput pad 0 (%d)", ++logged);
+        using PFN_EnablePad = void(__thiscall*)(void* self, int xinputIndex);
+        reinterpret_cast<PFN_EnablePad>(addr::XInput_EnablePad)(pad, 0);
+        static int logged = 0;
+        if (logged < 20)
+        {
+            AVP_LOG(kLog, "game's pad was off: enabled on XInput pad 0 (%d)", ++logged);
+        }
+    }
+
+    const uintptr_t profile = Global<uintptr_t>(addr::g_PlayerProfile);
+    if (!profile)
+        return;
+    const uintptr_t options = profile + addr::kProfileControlOptions;
+    if (Global<uint8_t>(options + addr::kControlOptionGamepad) != 0)
+        return;
+    using PFN_SetGamepad = void(__thiscall*)(void* self, bool enabled);
+    reinterpret_cast<PFN_SetGamepad>(addr::Options_SetGamepad)(reinterpret_cast<void*>(options), true);
+    static int loggedOption = 0;
+    if (loggedOption < 20)
+    {
+        AVP_LOG(kLog, "game's controller option was off: turned on (%d)", ++loggedOption);
     }
 }
 

@@ -92,9 +92,9 @@ constexpr uintptr_t vt_LookCtrlClassC = 0x00922E40; // species index 2: Marine
 
 // ---- Weapons (static, 2026-10-17; docs/re/FINDINGS.md section 13) ----
 // "Ranged Weapon" classes: base ctor 007B3D40 (vtable 00935E90), one class per weapon type (factory 007BBB70, type
-// number at weapon+0x40, flags at weapon+0x80 always with bit 0x80). Fire (+0xF4, 007B1060 / 007B46A0) -> per barrel
-// 007AF9E0 -> GetFireTransform (+0xE4) -> the shot spawn 007B8A00 at the returned position, oriented along the
-// returned direction.
+// number at weapon+0x40, flags at weapon+0x80 always with bit 0x80). The fire tick (+0x80, 007B2460): GetFireTransform
+// (+0xE4), the visual effects (+0xC4 -> 007B8A00) and the shot itself (+0xEC, or +0xE8 for projectiles), all at the
+// returned position, oriented along the returned direction. A second path: +0xF4 -> 007AF9E0 -> 007B8A00.
 // GetFireTransform: thiscall(weapon; character, muzzleHash, ammo value, range, outPos[3], outDir[3], outMat[9],
 // outDist, outTarget), RET 0x24. Player: position = the muzzle attachment, direction = the character's look (+0xB0).
 constexpr uintptr_t Weapon_GetFireTransform       = 0x007B3110; // 12 classes
@@ -103,6 +103,33 @@ constexpr uintptr_t Weapon_GetFireTransformMuzzle = 0x007AB1E0; // vtable 009359
 constexpr uintptr_t vt_RangedWeapons[] = {0x00935708, 0x00935820, 0x00935930, 0x00935A58, 0x00935C48,
                                           0x00935D60, 0x00935E90, 0x00935FB0, 0x009360C0, 0x009361F0,
                                           0x00936310, 0x00936418, 0x00936698, 0x009367A8};
+
+// ---- Weapon effects (static, 2026-10-31; FINDINGS section 13) ----
+// 007B8A00 -> 007B7CD0: each effect (00603A50) gets an attachment node on a model socket, by hash. The muzzle socket's
+// hash: [[weapon+0xD0]+4] + barrel * 0x118 + 0xFC (first person, [character+0x24]+0xE8 bit 2) or +0x100. The nodes hang
+// off model+0xD0 (next: node+8); 004D3960 hands each node's world transform to its effect when it submits the model.
+constexpr uintptr_t vt_EffectAttachment = 0x008C3F50;
+constexpr uintptr_t kCharComp           = 0x24;  // character -> its component
+constexpr uintptr_t kCompFlags          = 0xE8;  // bit 2: first person
+constexpr uintptr_t kCompModel          = 0x98;  // component -> model
+constexpr uintptr_t kWeaponBarrelCount  = 0x90;  // low 4 bits
+constexpr uintptr_t kWeaponEffects      = 0xD0;  // +4 = the effects' data
+constexpr uintptr_t kEffectDataStride   = 0x118; // per barrel
+constexpr uintptr_t kEffectDataHashFp   = 0xFC;  // socket hash, first person
+constexpr uintptr_t kEffectDataHash3p   = 0x100; // socket hash, third person
+constexpr uintptr_t kModelSkeletons     = 0x3C;  // 3 pointers; skeleton+0x40 = socket count, +0x44 = sockets
+constexpr uintptr_t kModelAttachments   = 0xD0;  // first node
+constexpr uintptr_t kSocketStride       = 0x44;
+constexpr uintptr_t kSocketHash         = 0x34;
+constexpr uintptr_t kNodeNext           = 0x08;
+constexpr uintptr_t kNodeSocket         = 0x0C;
+constexpr uintptr_t kNodeSkeleton       = 0x10;  // which of the model's 3
+constexpr uintptr_t kNodePos            = 0x34;  // model space, or world with kNodeFixedPos
+constexpr uintptr_t kNodeQuat           = 0x40;  // x y z w; likewise
+constexpr uintptr_t kNodeFlags          = 0x58;
+constexpr uint32_t  kNodeFixedRot       = 0x08;  // the game leaves the quaternion alone, and reads it as world
+constexpr uint32_t  kNodeFixedPos       = 0x10;  // the same for the position
+constexpr uintptr_t kNodeChildModelSlot = 0x24;  // vtable: thiscall returning the node's model, if it holds one
 
 // ---- Screen warp effect (2026-10-18; FINDINGS section 13) ----
 // A full-screen displacement: the scene re-sampled through a displacement texture (PS blob 0094A390, created by
@@ -122,6 +149,9 @@ constexpr uintptr_t XInput_EnablePad             = 0x00646320; // thiscall(pad, 
 constexpr uintptr_t g_Pad                        = 0x00A218B0; // the game's one pad object
 constexpr uintptr_t kPadXInputEnabled            = 0x244;      // bool: XInput_PollPad runs
 constexpr uintptr_t g_PadInUse                   = 0x009D4ADF; // bool, set by the game from enabled + connected
+constexpr uintptr_t Options_SetGamepad           = 0x00817260; // thiscall(controlOptions, bool), RET 4
+constexpr uintptr_t kProfileControlOptions       = 0xB4;       // g_PlayerProfile +: the control options
+constexpr uintptr_t kControlOptionGamepad        = 0x0A;       // control options +: bool, saved; off = pad input wiped
 
 // ---- Entities ----
 // thiscall(registry, handle, 1) -> entity, RET 8. The local player's entity = Find(g_EntityRegistry, *(g_GameScene + 8),

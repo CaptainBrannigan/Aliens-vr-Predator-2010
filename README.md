@@ -72,9 +72,13 @@ To remove the mod, delete `dxgi.dll` from the game folder.
   hold them (on for the Predator; off by default for the Marine, whose gun it would sway).
 - **The Marine's gun is in your right hand, and shots leave the gun** along its barrel, independent of where you
   look. Each weapon keeps its own grip and shot-line calibration; weapons are recognised automatically.
+- **The muzzle flash stays on the gun in your hand** (setting "Muzzle flash on the gun"), at the shot origin.
 - **Laser sight** along the shot line, for calibrating (off by default; it shows through walls).
-- **Two-handed aiming** (Marine): grip with your left hand on the barrel and the gun points along the line between
+- **Two-handed aiming** (Marine): grip with your off hand on the barrel and the gun points along the line between
   your hands.
+- **Left-handed mode** (setting "Left-handed", off by default; one setting for all species, new and untested): the
+  arms play each other's animations mirrored, the Marine's gun goes in your left hand, and the triggers and grips swap
+  so your left hand fires. The gun itself isn't mirrored, and the Predator's wrist blades may not fully swap sides.
 
 ### Controls (default bindings)
 

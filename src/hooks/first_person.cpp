@@ -201,6 +201,11 @@ int SegmentOf(const ArmRig& r, int bone)
 // the joint's two segments).
 float g_armJoint[2][3][3] = {};
 bool g_haveJoints[2] = {};
+// Left-handed: each bone's opposite (BuildMirrorPairs), -1 = none; the game's hand centres after the mirror, which the
+// animation layering follows (g_gameHand stays the game's own: that's where a held weapon is).
+int g_mirrorPartner[kMaxBones];
+bool g_haveMirror = false;
+float g_layerHand[2][3] = {};
 
 // ---- Matrices (row-major 4x4, row vectors: v' = v * M; rows 0-2 = axes, row 3 = translation) ----
 void Mul4(const float a[16], const float b[16], float c[16])
@@ -465,7 +470,7 @@ void LayerMove(int hand, const float camRot[9], const float camPos[3], const flo
         return;
     }
     float rel[3], q[3];
-    Sub3(g_gameHand[hand], camPos, rel);
+    Sub3(g_layerHand[hand], camPos, rel);
     VecTimes(rel, camRot, q); // game camera space (camRot's columns: the camera's right, down, forward)
     const DWORD now = GetTickCount();
     if (!g_bodySecondRender)
@@ -701,8 +706,19 @@ bool ElbowFromModel(int hand, const ArmRig& r, float* buffer, const float winv[1
 // and the shoulder follows the hand. The forearm twist bone takes part of the hand's roll. Without joints from the
 // bone map the whole arm moves rigidly with the hand.
 bool TwoHandAimDelta(float d[16]); // below, with the two-handed aim
-float g_rightHandMove[16];         // two-handed: the weapon hand's world move this body draw (the off hand's too)
-bool g_haveRightHandMove = false;
+// The hand holding the gun (0 left, 1 right): the left with setting LeftHanded.
+int GunHand() { return settings::LeftHanded() ? 0 : 1; }
+// The gun's frame on its controller. The gun offsets are one set, mirrored for the left hand like the hand offsets.
+bool GunControllerWorld(float rot[9], float pos[3])
+{
+    float off[3], angles[3];
+    settings::GunOffset(off, angles);
+    if (settings::LeftHanded())
+        off[0] = -off[0], angles[1] = -angles[1], angles[2] = -angles[2];
+    return ControllerWorld(GunHand(), off, angles, rot, pos);
+}
+float g_gunHandMove[16];         // two-handed: the weapon hand's world move this body draw (the off hand's too)
+bool g_haveGunHandMove = false;
 
 bool ArmToController(float* buffer, int hand, const ArmRig& r)
 {
@@ -753,7 +769,7 @@ bool ArmToController(float* buffer, int hand, const ArmRig& r)
     // the gun by the two-handed aim (about the gun's origin), so it keeps holding it; the off hand takes the same move,
     // so it keeps exactly the game's own offset from the weapon hand (its grip on the gun, also through reloads), and
     // its arm's IK reaches it there. (The right hand is placed first: StartModel.)
-    if (g_twoHanded && hand == 1)
+    if (g_twoHanded && hand == GunHand())
     {
         float d[16], td[16];
         if (TwoHandAimDelta(d))
@@ -761,11 +777,11 @@ bool ArmToController(float* buffer, int hand, const ArmRig& r)
             Mul4(t, d, td);
             std::memcpy(t, td, sizeof(t));
         }
-        std::memcpy(g_rightHandMove, t, sizeof(t));
-        g_haveRightHandMove = true;
+        std::memcpy(g_gunHandMove, t, sizeof(t));
+        g_haveGunHandMove = true;
     }
-    else if (g_twoHanded && hand == 0 && g_haveRightHandMove)
-        std::memcpy(t, g_rightHandMove, sizeof(t));
+    else if (g_twoHanded && g_haveGunHandMove)
+        std::memcpy(t, g_gunHandMove, sizeof(t));
     float wt4[16], tm[16];
     Mul4(w, t, wt4);
     Mul4(wt4, winv, tm);
@@ -950,14 +966,15 @@ bool ArmToController(float* buffer, int hand, const ArmRig& r)
 // tilt the gun). Releasing the grip lets go. Decided once per frame (OnPresent); the gun placement, and with it the
 // drawn gun, the shots and the laser, follow it.
 
-bool LeftPalmWorld(float pos[3])
+bool OffPalmWorld(float pos[3])
 {
     float pose[3][4], rot[9];
-    return input::GetHandPose(0, true, pose) && stereo::HandToWorld(pose, rot, pos);
+    return input::GetHandPose(1 - GunHand(), true, pose) && stereo::HandToWorld(pose, rot, pos);
 }
 
-// The left palm is in the two-handed grab zone (or holds the gun): the left grip -- also the left bumper -- is the
-// grab there, not LB (xinput_hook.cpp). Main thread writes, the XInput hook reads.
+// The off hand's palm is in the two-handed grab zone (or holds the gun): its grip -- also the left bumper, left-handed
+// too (the bumpers swap with the hands) -- is the grab there, not LB (xinput_hook.cpp). Main thread writes, the XInput
+// hook reads.
 std::atomic<bool> g_leftGripOnGun{false};
 
 void UpdateTwoHanded()
@@ -969,10 +986,9 @@ void UpdateTwoHanded()
     bool inZone = false;
     if (available)
     {
-        float off[3], angles[3], rot[9], pos[3], palm[3], radius, reach, grip[2];
-        settings::GunOffset(off, angles);
+        float rot[9], pos[3], palm[3], radius, reach, grip[2];
         settings::TwoHandParams(&radius, &reach, grip);
-        if (ControllerWorld(1, off, angles, rot, pos) && LeftPalmWorld(palm))
+        if (GunControllerWorld(rot, pos) && OffPalmWorld(palm))
         {
             const float fwd[3] = {rot[2], rot[5], rot[8]};
             float to[3], perp[3];
@@ -984,7 +1000,7 @@ void UpdateTwoHanded()
             inZone = along >= 0.05f && along <= reach && dist <= radius;
         }
     }
-    if (!available || !input::GripHeld(0))
+    if (!available || !input::GripHeld(1 - GunHand()))
     {
         if (g_twoHanded)
             AVP_LOG(kLog, "two-handed aim off");
@@ -1043,11 +1059,11 @@ bool FrameToward(const float rot[9], const float pos[3], const float target[3], 
 }
 
 // Two-handed: rot (the right hand's gun frame) turned to aim at the left palm moved by the off-hand grip offset.
-void AimAtLeftPalm(float rot[9], const float pos[3])
+void AimAtOffPalm(float rot[9], const float pos[3])
 {
     float palm[3], radius, reach, grip[2], aimed[9];
     settings::TwoHandParams(&radius, &reach, grip);
-    if (!LeftPalmWorld(palm) || !FrameToward(rot, pos, palm, aimed))
+    if (!OffPalmWorld(palm) || !FrameToward(rot, pos, palm, aimed))
         return;
     if (grip[0] != 0.0f || grip[1] != 0.0f)
     {
@@ -1064,12 +1080,11 @@ void AimAtLeftPalm(float rot[9], const float pos[3])
 // origin, for the hands.
 bool TwoHandAimDelta(float d[16])
 {
-    float off[3], angles[3], r1[9], r2[9], rd[9], pos[3];
-    settings::GunOffset(off, angles);
-    if (!ControllerWorld(1, off, angles, r1, pos))
+    float r1[9], r2[9], rd[9], pos[3];
+    if (!GunControllerWorld(r1, pos))
         return false;
     std::memcpy(r2, r1, sizeof(r2));
-    AimAtLeftPalm(r2, pos);
+    AimAtOffPalm(r2, pos);
     for (int i = 0; i < 3; ++i)
         for (int j = 0; j < 3; ++j)
             rd[i * 3 + j] = r1[i * 3 + 0] * r2[j * 3 + 0] + r1[i * 3 + 1] * r2[j * 3 + 1] + r1[i * 3 + 2] * r2[j * 3 + 2];
@@ -1082,13 +1097,11 @@ bool TwoHandAimDelta(float d[16])
 // Two-handed, the frame aims at the left palm.
 bool PlacedGunWorld(const float w[16], float nw[16])
 {
-    float off[3], angles[3];
-    settings::GunOffset(off, angles);
     float ctrlRot[9], ctrlPos[3];
-    if (!ControllerWorld(1, off, angles, ctrlRot, ctrlPos))
+    if (!GunControllerWorld(ctrlRot, ctrlPos))
         return false;
     if (g_twoHanded)
-        AimAtLeftPalm(ctrlRot, ctrlPos);
+        AimAtOffPalm(ctrlRot, ctrlPos);
     float camRot[9], camPos[3];
     stereo::GameCamera(camRot, camPos);
     for (int i = 0; i < 3; ++i)
@@ -1102,7 +1115,7 @@ bool PlacedGunWorld(const float w[16], float nw[16])
         nw[i * 4 + 3] = 0.0f;
     }
     // The right hand's animation movement (LayerMove), so the hand stays on the gun; the shots follow the drawn gun.
-    const LayerHand& layer = g_layer[1];
+    const LayerHand& layer = g_layer[GunHand()];
     const bool layered = settings::ArmsFollowControllers() && layer.have && GetTickCount() - layer.tick < kLayerGapMs;
     for (int j = 0; j < 3; ++j)
         nw[12 + j] = ctrlPos[j] + (layered ? layer.world[j] : 0.0f); // the offsets are in ctrlPos / ctrlRot already
@@ -1302,6 +1315,99 @@ bool HideBones(float* buffer)
     return true;
 }
 
+// ---- Left-handed (setting LeftHanded, 2026-10-31) ----
+// Each arm takes the other's animation, reflected: the rigs are symmetric in bind space about x = 0, so a bone's new
+// matrix = B * partner * C, B the bind-space reflection and C the same reflection about the chest (S^-1 * B * S of the
+// chest bone), so it holds however the torso is posed. Two reflections: still a rotation, nothing to change in the
+// draw state. The gun's model isn't symmetric, so it isn't mirrored: it just goes on the left controller.
+void BuildMirrorPairs(const ArmRig* arms)
+{
+    for (int& p : g_mirrorPartner)
+        p = -1;
+    auto gap = [](int a, int b) { // between a's centroid reflected and b's
+        const float dx = g_boneCentroid[a][0] + g_boneCentroid[b][0], dy = g_boneCentroid[a][1] - g_boneCentroid[b][1],
+                    dz = g_boneCentroid[a][2] - g_boneCentroid[b][2];
+        return std::sqrt(dx * dx + dy * dy + dz * dz);
+    };
+    // Clavicle to hand, in step on both sides: the Marine's 6-27 / 28-49 (shoulder pads too), the Predator's 6-24 / 30-48.
+    const bool marine = Global<int>(addr::g_PlayerSpecies) == 2;
+    const int first = 6, last = marine ? 27 : 24, offset = marine ? 22 : 24;
+    float worst = 0.0f;
+    int worstBone = -1;
+    for (int b = first; b <= last; ++b)
+    {
+        g_mirrorPartner[b] = b + offset;
+        g_mirrorPartner[b + offset] = b;
+        if (g_boneWeight[b] > 0.0f && g_boneWeight[b + offset] > 0.0f && gap(b, b + offset) > worst)
+            worst = gap(b, b + offset), worstBone = b;
+    }
+    // The bones at the wrist don't line up on the Predator (its gauntlets differ): the nearest reflected one, else
+    // MirrorArms has it ride its forearm.
+    constexpr float kMatchM = 0.05f;
+    int matched = 0;
+    for (int a : arms[0].wrist)
+    {
+        if (a < 0 || g_mirrorPartner[a] >= 0 || g_boneWeight[a] <= 0.0f)
+            continue;
+        int best = -1;
+        float bestGap = kMatchM;
+        for (int b : arms[1].wrist)
+            if (b >= 0 && g_mirrorPartner[b] < 0 && g_boneWeight[b] > 0.0f && gap(a, b) < bestGap)
+                best = b, bestGap = gap(a, b);
+        if (best >= 0)
+        {
+            g_mirrorPartner[a] = best;
+            g_mirrorPartner[best] = a;
+            ++matched;
+        }
+    }
+    g_haveMirror = true;
+    AVP_LOG(kLog, "left-handed: bones %d-%d mirror %d-%d, worst bind mismatch %.3f m (bone %d); %d wrist pair(s) matched",
+            first, last, first + offset, last + offset, worst, worstBone, matched);
+}
+
+// buffer's arms from the game's own pose (g_snap), mirrored.
+bool MirrorArms(const ArmRig* arms, float* buffer)
+{
+    if (!g_haveMirror)
+        return false;
+    float chest[16], inv[16], c[16], factor;
+    ReadBone(BoneSlot(g_snap, arms[0].chest), chest, &factor);
+    if (!InverseAffine(chest, inv))
+        return false;
+    for (int i = 0; i < 4; ++i)
+        inv[i * 4] = -inv[i * 4]; // S^-1 * B
+    Mul4(inv, chest, c);
+    for (int b = 0; b < kMaxBones; ++b)
+    {
+        const int partner = g_mirrorPartner[b];
+        if (partner < 0)
+            continue;
+        float s[16], m[16];
+        ReadBone(BoneSlot(g_snap, partner), s, &factor);
+        for (int k = 0; k < 3; ++k)
+            s[k] = -s[k]; // B * S
+        Mul4(s, c, m);
+        WriteBone(BoneSlot(buffer, b), m, BoneSlot(buffer, b)[10]); // the slot keeps its own factor
+    }
+    for (int h = 0; h < 2; ++h)
+        for (int w : arms[h].wrist)
+        {
+            if (w < 0 || g_mirrorPartner[w] >= 0)
+                continue;
+            float s[16], f0[16], fi[16], f1[16], t[16], m[16];
+            ReadBone(BoneSlot(g_snap, w), s, &factor);
+            ReadBone(BoneSlot(g_snap, arms[h].fore), f0, &factor);
+            ReadBone(BoneSlot(buffer, arms[h].fore), f1, &factor);
+            if (!InverseAffine(f0, fi))
+                continue;
+            Mul4(s, fi, t);
+            Mul4(t, f1, m);
+            WriteBone(BoneSlot(buffer, w), m, BoneSlot(buffer, w)[10]);
+        }
+    return true;
+}
+
 void Upload(ID3D11DeviceContext* c, const float* data)
 {
     D3D11_MAPPED_SUBRESOURCE m{};
@@ -1357,16 +1463,30 @@ void StartModel(ID3D11DeviceContext* c, ID3D11Buffer* vb, bool secondRender)
                 PointTimes(p, w, g_gameHand[h]);
         }
         if (both)
+        {
             g_gameHandTick = GetTickCount();
+            std::memcpy(g_layerHand, g_gameHand, sizeof(g_layerHand));
+        }
+        if (settings::LeftHanded() && settings::ArmsFollowControllers() && arms && MirrorArms(arms, copy))
+        {
+            changed = true;
+            for (int h = 0; h < 2; ++h)
+            {
+                float p[3];
+                if (HandCentreModel(copy, arms[h], p))
+                    PointTimes(p, w, g_layerHand[h]);
+            }
+        }
         if (settings::ArmsFollowControllers() && arms)
         {
             changed = OffsetBody(copy) || changed; // first: the arms' IK starts from the moved, turned shoulders
             if (Global<int>(addr::g_PlayerSpecies) == 2)
                 changed = TurnTorso(copy) || changed; // the Marine's bones (its idle pose holds the left shoulder forward)
-            g_haveRightHandMove = false;
+            g_haveGunHandMove = false;
             g_bodySecondRender = secondRender;
-            changed = ArmToController(copy, 1, arms[1]) || changed; // the weapon hand first (two-handed: the off
-            changed = ArmToController(copy, 0, arms[0]) || changed; // hand takes its move)
+            const int gunHand = GunHand(); // the weapon hand first (two-handed: the off hand takes its move)
+            changed = ArmToController(copy, gunHand, arms[gunHand]) || changed;
+            changed = ArmToController(copy, 1 - gunHand, arms[1 - gunHand]) || changed;
         }
         changed = HideBones(copy) || changed;
     }
@@ -1664,6 +1784,8 @@ void LogBoneMap(ID3D11DeviceContext* c)
                 jt[1][0], jt[1][1], jt[1][2], jt[2][0], jt[2][1], jt[2][2], dist(jt[0], jt[1]), dist(jt[1], jt[2]),
                 joint[0][3], joint[1][3], joint[2][3]);
     }
+    if (arms)
+        BuildMirrorPairs(arms);
 }
 
 // ---- Draw signatures (debug MeshProbe) ----

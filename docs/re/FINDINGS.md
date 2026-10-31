@@ -446,7 +446,8 @@ type (factory `007BBB70`, type number at `+0x40`): 14 vtables (addresses.h `vt_R
   with ammo, `007AF9E0(barrel)`, then `007A2DD0(1, 0)`.
 - `007AF9E0`: `weapon->GetFireTransform(+0xE4)`, then `00641530(orientation, dir)` turns the direction into an
   orientation, and `[weapon+0xD0]->007B8A00(1, character, ?, pos, orientation, barrel)` -> `007B7CD0` spawns up to
-  three shot entities (`00603A50(pos, orientation, ...)`). **Only the returned position and direction reach the shot.**
+  three visual effects (`00603A50(pos, orientation, ...)`; corrected 2026-10-31, these aren't the shot, see "Muzzle
+  flash" below). **Only the returned position and direction reach the shot.**
 - **GetFireTransform** (`+0xE4`): thiscall(weapon; character, muzzleHash, `*(ammo+0xA4)` (float), range (float),
   outPos[3], outDir[3], outMat[9], outDist, outTarget), RET 0x24 (call site `007AFAB5`). `007B3110` (12 classes):
   position + matrix from the character's attachment `muzzleHash` (`005DC920` on `char+4+vbase+0x68`, falling back to
@@ -454,7 +455,35 @@ type (factory `007BBB70`, type number at `+0x40`): 14 vtables (addresses.h `vt_R
   character's **look** (`+0xB0`), or the muzzle axis when `weapon+0xCC` bit 2 is set; outDist = |aim point - muzzle|.
   AI characters aim at their target instead (`007A9B00` / `007A8F30`). `007B4CC0` (vtable `009361F0`): the same with
   a cached transform at `+0x118..`. `007AB1E0` (vtable `00935930`, type 6): direction = the muzzle matrix's column 2.
-- Other `+0xE4` callers with the full argument list: `007B2460` (a second fire path, unread).
+- Other `+0xE4` callers with the full argument list: `007B2460`, the main fire tick (slot +0x80): GetFireTransform,
+  then per pellet the visual effects (`+0xC4`, `007B2DA0`; `007B5650` for vtable `009361F0`) and the shot itself
+  (`+0xEC` `007B0D30`, or `+0xE8` `007B3540` for ammo type 4).
+
+**Muzzle flash (static, 2026-10-31):** `007B8A00` (the "Shot_Spawn" of older notes) is the weapon's effect spawner:
+thiscall(`weapon+0xD0`; kind, character, model, pos, orientation, barrel). Kind 0 = every shot (`+0xC4`), 1 =
+`007AF9E0`, 2 = a one-shot behind `weapon+0xF9`; each has first / third person lists of up to 3 effect ids in
+`[[weapon+0xD0]+4]`, per barrel (stride 0x118). The ids are data, so which one is the flash isn't known statically.
+`007B7CD0` creates each with `00603A50` (flags 0xF, | 0x8000 for the local player), then a 0x6C attachment node (vtable
+`008C3F50`, ctor `004DB7E0`) attached (`004DA390`) by socket hash (`+0xFC` first person, `+0x100` third) to the model
+at `[char+0x24]+0x98`, or to a model hanging off it.
+
+Node: +0x04 model, +0x08 next (head `model+0xD0`), +0x0C socket, +0x10 which skeleton (`model+0x3C`, 3 slots), +0x14 /
++0x20 local offset (flag 0x20), +0x34 position, +0x40 quaternion (x y z w, `0042B600`), +0x50 stamp (`model+0xC0`),
++0x58 flags (1 delete with the list, 2 owns the effect, **8 / 0x10 rotation / position not written by the game and
+read as world**, 0x40 already world), +0x64 effect handle. Skeleton: +0x40 socket count, +0x44 sockets (stride 0x44:
+position +0, quaternion +0x0C, parent bone +0x30, hash +0x34).
+
+The effect follows when its model is submitted: `004D3960` (mesh submit, then each node) -> `004DC910` -> `004DC5A0`
+(the node's world transform; recomputed from the CPU bones by `004D4AB0` -> `004DC6A0` -> `004DA8E0` when the stamp is
+old) -> node slot +0x2C (`004DCC00`) -> effect slot +0x1C `SetTransform` (`00601AE0`: position +0x54, rotation +0x60).
+So the flash spawned at the shot origin is snapped back to the game's own gun, which the mod only moves in the bone
+buffer. `src/vr/shots.*` pins the muzzle socket's nodes instead (flags + position + quaternion, each frame).
+
+**Left-handed mirror (static, 2026-10-31, untested live):** bind x = 0 is the body's middle (chest bone), left arm x-,
+right x+, so `first_person.cpp` gives each arm bone B * partner * C, with B = x -> -x and C = S^-1 * B * S of the chest
+bone (determinant +1, so no winding change, and it holds with the torso twisted). Pairs: Marine 6-27 / 28-49, Predator
+6-24 / 30-48 plus the nearest reflected wrist bones; unmatched wrist bones ride their forearm. `avpvr_fp.log` gives the
+worst bind mismatch ("left-handed:"), which tests the symmetry assumption. The per-bone factor stays with its slot.
 
 **Shots from the gun (`src/vr/shots.*`):** `+0xE4` replaced in the 14 classes' shadow vtables; after the original,
 for the local player's character (Marine, setting on) the line is put on the drawn gun: origin = the placed weapon
