@@ -13,8 +13,8 @@ Marine and the Predator on your motion controllers, and an in-headset settings m
 - Aliens vs Predator (the Steam PC release), its **DirectX 11** version, `AvP_DX11.exe`. The DirectX 9 `AvP.exe` isn't
   supported.
 - SteamVR **2.17 or newer** (the release that added a 32-bit runtime), with a headset and motion controllers.
-  Developed and tested on a Meta Quest 3 over Steam Link with Touch controllers; other headsets should work, but only
-  the Touch controllers get default bindings.
+  Developed and tested on a Meta Quest 3 over Steam Link with Touch controllers; other headsets should work. Touch and
+  Valve Index controllers get default bindings (Virtual Desktop included); others need a binding made in SteamVR.
 - `openvr_api.dll` (32-bit) from your SteamVR install.
 
 ## Installing
@@ -60,7 +60,7 @@ To remove the mod, delete `dxgi.dll` from the game folder.
 - **Positional tracking (6DoF):** lean, crouch and peek around corners. Walk around your room and the character
   **steps under your head** once you're a set distance away, through the game's own movement, so walls and collision
   still apply (the distance and step speed are settings). Your own stick movement carries your play space along.
-- **Recenter** from the settings menu, or touch both thumbrests at once.
+- **Recenter** from the settings menu, or touch both thumbrests (Index: trackpads) at once.
 
 ### Motion controllers
 - **Arms on your hands** (Marine and Predator): each hand sits on its controller and the arms bend to reach it
@@ -76,19 +76,25 @@ To remove the mod, delete `dxgi.dll` from the game folder.
 - **Two-handed aiming** (Marine): grip with your left hand on the barrel and the gun points along the line between
   your hands.
 
-### Controls (Touch, default bindings)
+### Controls (default bindings)
 
-The controllers act as an Xbox pad for the game; every action can be rebound in SteamVR.
+The controllers act as an Xbox pad for the game; every action can be rebound in SteamVR. Default bindings exist for
+**Touch** and **Valve Index** controllers. Virtual Desktop's Index emulation of Touch controllers uses the Index
+column (physical X / Y are its left A / B). Other controllers need a binding made in SteamVR.
 
-| Touch | Game (Xbox pad) |
-|---|---|
-| Sticks, stick clicks | Sticks, stick clicks |
-| Triggers | LT / RT |
-| Grips | LB / RB (the left grip on the Marine's gun barrel is the two-handed grab instead) |
-| A / B / X / Y | A / B / X / Y |
-| Double press X / Y / B / A | D-pad left / up / right / down |
-| Double tap the left / right thumbrest | Back / Start |
-| Touch both thumbrests at once | Recenter the view |
+| Game (Xbox pad) | Touch | Index |
+|---|---|---|
+| Sticks, stick clicks | Sticks, stick clicks | Thumbsticks, stick clicks |
+| LT / RT | Triggers | Triggers |
+| LB / RB (the left grip on the Marine's gun barrel is the two-handed grab instead) | Grips | Squeeze the grips |
+| A / B | A / B | Right A / B |
+| X / Y | X / Y | Left A / B |
+| D-pad left / up / right / down | Double press X / Y / B / A | Double press left A / left B / right B / right A |
+| Back / Start | Double tap the left / right thumbrest | Double tap the left / right trackpad, or hold the left / right stick click (0.8 s) |
+| Recenter the view | Touch both thumbrests at once | Touch both trackpads at once |
+
+Virtual Desktop's emulation doesn't report trackpad touches by default, so there Back / Start are on the held stick
+clicks and recenter is in the settings menu.
 
 ### Settings menu
 
@@ -99,6 +105,8 @@ shot values also **per weapon**; rows that don't apply to the species you're pla
 
 ## Known issues
 
+- **Index default bindings are new and untested on real Index controllers.** The hand calibration was tuned on Touch,
+  so Index users may need to adjust "Hand placement" and the gun offsets.
 - **The Alien has no hands on the controllers yet**, and the Alien's and Predator's attacks are on buttons (grips,
   triggers), not your hand movements.
 - **As the Alien, some distant things shift slightly against your head movement** (for example the view through

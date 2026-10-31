@@ -4,6 +4,7 @@
 #include "hud_passes.h"
 #include "first_person.h"
 #include "quit_hook.h"
+#include "xinput_hook.h"
 #include "../vr/stereo.h"
 #include "../core/settings.h"
 #include "../core/addresses.h"
@@ -1081,6 +1082,7 @@ HRESULT STDMETHODCALLTYPE Hook_Present(IDXGISwapChain* sc, UINT sync, UINT flags
     }
     RenderTwiceOnPresent(sc); // old experiment (off); draws it issues are counted in the next frame
     unsigned syncInterval = sync;
+    KeepGamePadEnabled();
     fp::OnPresent(reinterpret_cast<ID3D11DeviceContext*>(Global<uintptr_t>(addr::g_D3DContext)));
     stereo::OnPresent(sc, syncInterval); // VR: second eye render + submit, or the flat screen
     return g_realPresent(sc, syncInterval, flags);

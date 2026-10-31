@@ -1,5 +1,6 @@
 #include "xinput_hook.h"
 
+#include "../core/addresses.h"
 #include "../core/log.h"
 #include "../core/settings.h"
 #include "first_person.h"
@@ -158,6 +159,31 @@ bool InstallXInputHook()
     HookExport(xinput, "XInputGetCapabilities", reinterpret_cast<void*>(&HookedCaps),
                reinterpret_cast<void**>(&g_originalCaps));
     return true;
+}
+
+void KeepGamePadEnabled()
+{
+    static bool lastInUse = false;
+    const bool inUse = Global<uint8_t>(addr::g_PadInUse) != 0;
+    if (inUse != lastInUse)
+    {
+        AVP_LOG(kLog, "game's pad in use: %d", inUse);
+        lastInUse = inUse;
+    }
+
+    input::PadState vr{};
+    if (!input::GetPad(&vr)) // no controllers running: leave the game's own pad handling alone
+        return;
+    const auto pad = reinterpret_cast<void*>(addr::g_Pad);
+    if (Global<uint8_t>(addr::g_Pad + addr::kPadXInputEnabled) != 0)
+        return;
+    using PFN_EnablePad = void(__thiscall*)(void* self, int xinputIndex);
+    reinterpret_cast<PFN_EnablePad>(addr::XInput_EnablePad)(pad, 0);
+    static int logged = 0;
+    if (logged < 20)
+    {
+        AVP_LOG(kLog, "game's pad was off: enabled on XInput pad 0 (%d)", ++logged);
+    }
 }
 
 } // namespace avp

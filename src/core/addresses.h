@@ -118,6 +118,10 @@ constexpr uintptr_t Input_ConsumeAction          = 0x0060DF40;
 constexpr uintptr_t Input_PackActionBits         = 0x006256A0;
 constexpr uintptr_t XInput_PollPad               = 0x00645AA0;
 constexpr uintptr_t XInput_SetRumble             = 0x00659FB0;
+constexpr uintptr_t XInput_EnablePad             = 0x00646320; // thiscall(pad, xinputIndex), RET 4
+constexpr uintptr_t g_Pad                        = 0x00A218B0; // the game's one pad object
+constexpr uintptr_t kPadXInputEnabled            = 0x244;      // bool: XInput_PollPad runs
+constexpr uintptr_t g_PadInUse                   = 0x009D4ADF; // bool, set by the game from enabled + connected
 
 // ---- Entities ----
 // thiscall(registry, handle, 1) -> entity, RET 8. The local player's entity = Find(g_EntityRegistry, *(g_GameScene + 8),

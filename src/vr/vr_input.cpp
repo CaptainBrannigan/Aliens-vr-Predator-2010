@@ -18,6 +18,7 @@ namespace {
 constexpr const char* kLog = "avpvr_input.log";
 constexpr const char* kManifestFileName = "avpvr_actions.json";
 constexpr const char* kTouchBindingsFileName = "avpvr_bindings_oculus_touch.json";
+constexpr const char* kIndexBindingsFileName = "avpvr_bindings_knuckles.json";
 
 // PAD ACTIONS: the virtual pad's buttons, one SteamVR boolean action each. Names are permanent: SteamVR keeps a saved
 // copy of a player's edited bindings keyed by them (MOHW lesson: a renamed action is silently unbound there).
@@ -72,7 +73,8 @@ std::string BuildActionManifest()
 {
     std::string s = R"({
   "default_bindings": [
-    { "controller_type": "oculus_touch", "binding_url": "avpvr_bindings_oculus_touch.json" }
+    { "controller_type": "oculus_touch", "binding_url": "avpvr_bindings_oculus_touch.json" },
+    { "controller_type": "knuckles", "binding_url": "avpvr_bindings_knuckles.json" }
   ],
   "actions": [
     { "name": "/actions/main/in/RightHandAim", "type": "pose" },
@@ -121,6 +123,7 @@ std::string BuildActionManifest()
 struct DefaultBinding
 {
     std::string path, mode, input, output;
+    std::string parameters = {}; // JSON members for the source's "parameters", without the braces
 };
 
 // A button that also has a double press reports its click only once the double-press window has passed, and then as a
@@ -128,21 +131,65 @@ struct DefaultBinding
 // also gets its click's action on "long", after this delay: held past it, the button is held for real until release.
 constexpr const char* kHoldLongPressDelay = "0.3";
 
-// The default Touch binding, one source per path + mode (a button can carry several inputs: A = click A + double D-pad
-// down); an input bound to two actions (right thumbrest touch = RB and Start-hold) gets a second source.
-std::string BuildTouchBindings()
+enum class Controller
 {
+    Touch,
+    Index, // "knuckles": real Index controllers, and Virtual Desktop's Index emulation of Touch controllers
+};
+
+// The Index layout from the table's Touch paths: left A / B stand where X / Y are, thumbstick for joystick. (2026-10-31:
+// only Touch had a default binding, so every other controller type got no input at all -- and that includes Virtual
+// Desktop users, whose driver can present Touch as Index, thumb touch on A / B rather than the trackpad.)
+// The thumbrests' double tap goes to the trackpad's touch (both trackpads = recenter, as the thumbrests). Virtual
+// Desktop's emulation reports no trackpad touch by default, so Index also gets Back / Start on a held thumbstick click
+// (kStickHoldDelay; through the plain Back / Start actions).
+// Grips: an Index reads near full just from being held, so everything takes the squeeze force.
+constexpr const char* kStickHoldDelay = "0.8";
+constexpr const char* kIndexGripButton = "\"force_input\": \"force\", \"click_activate_threshold\": \"0.5\", "
+                                         "\"click_deactivate_threshold\": \"0.3\"";
+
+std::string IndexPath(std::string path)
+{
+    const auto swap = [&path](const char* from, const char* to) {
+        const size_t at = path.rfind(from);
+        if (at != std::string::npos && at + std::strlen(from) == path.size())
+            path = path.substr(0, at) + to;
+    };
+    swap("/input/x", "/input/a");
+    swap("/input/y", "/input/b");
+    swap("/input/joystick", "/input/thumbstick");
+    swap("/input/thumbrest", "/input/trackpad");
+    return path;
+}
+
+// A default binding, one source per path + mode (a button can carry several inputs: A = click A + double D-pad
+// down); an input bound to two actions gets a second source.
+std::string BuildBindings(Controller controller)
+{
+    const bool index = controller == Controller::Index;
+    const std::string gripMode = index ? "force_sensor" : "trigger", gripInput = index ? "force" : "pull";
+    const auto path = [index](const char* touchPath) { return index ? IndexPath(touchPath) : std::string(touchPath); };
     std::vector<DefaultBinding> bindings = {
         {"/user/hand/right/input/trigger", "trigger", "pull", "/actions/main/in/TriggerRight"},
         {"/user/hand/left/input/trigger", "trigger", "pull", "/actions/main/in/TriggerLeft"},
-        {"/user/hand/right/input/grip", "trigger", "pull", "/actions/main/in/GripRight"},
-        {"/user/hand/left/input/grip", "trigger", "pull", "/actions/main/in/GripLeft"},
-        {"/user/hand/left/input/joystick", "joystick", "position", "/actions/main/in/Move"},
-        {"/user/hand/right/input/joystick", "joystick", "position", "/actions/main/in/Turn"},
+        {"/user/hand/right/input/grip", gripMode, gripInput, "/actions/main/in/GripRight"},
+        {"/user/hand/left/input/grip", gripMode, gripInput, "/actions/main/in/GripLeft"},
+        {path("/user/hand/left/input/joystick"), "joystick", "position", "/actions/main/in/Move"},
+        {path("/user/hand/right/input/joystick"), "joystick", "position", "/actions/main/in/Turn"},
     };
     for (const PadAction& a : kPadActions)
         if (a.defaultPath)
-            bindings.push_back({a.defaultPath, a.defaultMode, a.defaultInput, PadActionName(a)});
+        {
+            const bool grip = std::strstr(a.defaultPath, "/input/grip") != nullptr;
+            bindings.push_back({path(a.defaultPath), a.defaultMode, a.defaultInput, PadActionName(a),
+                                index && grip ? kIndexGripButton : ""});
+        }
+    if (index)
+    {
+        const std::string hold = std::string("\"long_press_delay\": \"") + kStickHoldDelay + "\"";
+        bindings.push_back({"/user/hand/left/input/thumbstick", "button", "long", "/actions/main/in/PadBack", hold});
+        bindings.push_back({"/user/hand/right/input/thumbstick", "button", "long", "/actions/main/in/PadStart", hold});
+    }
 
     std::string sources;
     std::vector<bool> done(bindings.size(), false);
@@ -150,7 +197,7 @@ std::string BuildTouchBindings()
     {
         if (done[i])
             continue;
-        std::string inputs, clickOutput, usedInputs = ",";
+        std::string inputs, clickOutput, usedInputs = ",", parameters;
         bool hasDouble = false, hasLong = false;
         for (size_t j = i; j < bindings.size(); ++j)
             if (!done[j] && bindings[j].path == bindings[i].path && bindings[j].mode == bindings[i].mode &&
@@ -165,23 +212,24 @@ std::string BuildTouchBindings()
                     clickOutput = bindings[j].output;
                 hasDouble = hasDouble || bindings[j].input == "double";
                 hasLong = hasLong || bindings[j].input == "long";
+                if (parameters.empty())
+                    parameters = bindings[j].parameters;
             }
-        std::string parameters;
         if (bindings[i].mode == "button" && hasDouble && !hasLong && !clickOutput.empty())
         {
             inputs += ", \"long\": { \"output\": \"" + clickOutput + "\" }"; // see kHoldLongPressDelay
-            parameters = std::string(",\n          \"parameters\": { \"long_press_delay\": \"") + kHoldLongPressDelay + "\" }";
+            parameters = std::string("\"long_press_delay\": \"") + kHoldLongPressDelay + "\"";
         }
         if (!sources.empty())
             sources += ",\n";
         sources += "        {\n          \"path\": \"" + bindings[i].path + "\",\n          \"mode\": \"" + bindings[i].mode +
-                   "\",\n          \"inputs\": { " + inputs + " }" + parameters + "\n        }";
+                   "\",\n          \"inputs\": { " + inputs + " }" +
+                   (parameters.empty() ? "" : ",\n          \"parameters\": { " + parameters + " }") + "\n        }";
     }
 
-    std::string s = R"({
-  "controller_type": "oculus_touch",
+    std::string s = std::string("{\n  \"controller_type\": \"") + (index ? "knuckles" : "oculus_touch") + R"(",
   "name": "AvP VR defaults",
-  "description": "Default AvP VR bindings for Touch controllers: a virtual Xbox pad, grips = bumpers",
+  "description": "Default AvP VR bindings: a virtual Xbox pad, grips = bumpers",
   "bindings": {
     "/actions/main": {
       "poses": [
@@ -322,8 +370,11 @@ void Init(::vr::IVRInput* input, ::vr::IVRSystem* system, int trackingUniverse)
     g_system = system;
 
     const std::string manifestPath = ModuleDirectory() + kManifestFileName;
-    const std::string bindingsPath = ModuleDirectory() + kTouchBindingsFileName;
-    if (!WriteTextFile(manifestPath, BuildActionManifest()) || !WriteTextFile(bindingsPath, BuildTouchBindings()))
+    const std::string touchPath = ModuleDirectory() + kTouchBindingsFileName;
+    const std::string indexPath = ModuleDirectory() + kIndexBindingsFileName;
+    if (!WriteTextFile(manifestPath, BuildActionManifest()) ||
+        !WriteTextFile(touchPath, BuildBindings(Controller::Touch)) ||
+        !WriteTextFile(indexPath, BuildBindings(Controller::Index)))
     {
         AVP_LOG(kLog, "FAILED to write the action manifest / bindings next to the DLL (%s)", manifestPath.c_str());
         return;

@@ -152,6 +152,12 @@ Program: AvP_DX11.exe, image base 00400000, addresses = x32dbg addresses. Confid
 | `0060DF40` | func | `Input_ConsumeAction` | high | Clears/consumes an action |
 | `006256A0` | func | `Input_PackActionBits` | high | Packs actions 0..32 into a bitmask (net/demo input) |
 | `00644F70` | func | `Input_ClassifyPadName` | high | Pad name -> type (XInput = 5) |
+| `00645750` | func | `Input_EnumPadDevice` | high | DirectInput EnumDevices callback: lists each device, XInput ones with an index |
+| `00645EC0` | func | `XInput_PollPadIfEnabled` | high | Calls XInput_PollPad only if pad+0x244 is set |
+| `00646320` | func | `XInput_EnablePad` | high | thiscall(pad, xinputIndex): sets pad+0x244 and pad+0x25C, names the pad |
+| `0081A800` | func | `Input_CheckPadDevices` | high | Timed: XInputGetCapabilities 0-3, a changed count re-enumerates and takes the first device; sets g_PadInUse from enabled + connected |
+| `00A218B0` | data | `g_Pad` | high | The game's one pad object |
+| `009D4ADF` | data | `g_PadInUse` | high | bool: pad enabled and connected, set by Input_CheckPadDevices |
 | `00645AA0` | func | `XInput_PollPad` | high | XInputGetState -> normalized sticks pad+0x248..0x254, buttons pad+0x258, triggers +0x260/+0x261 |
 | `00659FB0` | func | `XInput_SetRumble` | high | XInputSetState rumble (called from camera shake) |
 
