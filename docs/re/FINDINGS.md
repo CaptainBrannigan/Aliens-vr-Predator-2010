@@ -428,6 +428,14 @@ screen; it stays at its full-screen spot. Hiding every other draw that samples t
 exactly it (user-verified): `HideDuplicateTracker`, bound textures tracked in a `PSSetShaderResources` hook.
 Not drawn by: other threads, command lists, indirect draws (all zero in gameplay).
 
+**The reticle's draw number (live 2026-11-01):** it has no fixed draw. The GUI pass batches by texture (2D quads, one
+VS / PS), 8-28 draws per frame, changing with what the HUD shows, and the reticle shares a 1024x1024 atlas batch: #9 of
+108 indices with the pistol, #7 of 114 with the pulse rifle, while #9 with the rifle was another batch. The HUD reads
+cvars: `AVP.HUD.ShowCrosshair` (`00A6694A`, written by `006AA920`) and `AVP.HUD.ShowWeaponAccuracy` (`00A6668D`, written
+by `0069C0B0`), now forced off instead of hiding a draw. The older "GUI draw 1" hide was hiding whichever batch was
+first. Camera shake: `CamShake_ApplyAllViews` (`0063E6B0`) runs in `Frame_Update` after the camera apply, so it only
+reaches view 0; the right eye takes view 0's rotation at Present.
+
 **Pause / menus:** `Game_IsPausedWithMenu` (`0080A450`) is true for the in-game pause menu; VR shows those frames
 (and cinematics) on the flat virtual screen, with the game's own aspect.
 
@@ -484,6 +492,13 @@ right x+, so `first_person.cpp` gives each arm bone B * partner * C, with B = x 
 bone (determinant +1, so no winding change, and it holds with the torso twisted). Pairs: Marine 6-27 / 28-49, Predator
 6-24 / 30-48 plus the nearest reflected wrist bones; unmatched wrist bones ride their forearm. `avpvr_fp.log` gives the
 worst bind mismatch ("left-handed:"), which tests the symmetry assumption. The per-bone factor stays with its slot.
+Predator live 2026-11-01: fine, worst mismatch 0.027 m (the clavicle); arm joints mirror to within 1 cm. Marine live:
+both wrists 90 degrees to the right. A hand keeps its angle to the game camera, so a reflection about a chest turned
+by a from the view turns both hands by 2a the same way (the suspected cause: the Marine's stance); the arms from the
+upper arm down now reflect about the view, keeping the shoulder. The log prints the chest's angle to check that.
+User-confirmed: that fixed the wrists. The shoulders then sat wrong (right high, left low and forward): the Marine's
+stance is also in its torso, so its whole upper body (bones 2-52) now reflects about the view through the stomach,
+with the torso turn negated. The Predator keeps the chest + view split above.
 
 **Shots from the gun (`src/vr/shots.*`):** `+0xE4` replaced in the 14 classes' shadow vtables; after the original,
 for the local player's character (Marine, setting on) the line is put on the drawn gun: origin = the placed weapon

@@ -764,6 +764,18 @@ bool HeadRotation(float m[9])
     return true;
 }
 
+bool HeadPose(float pos[3], float forward[3])
+{
+    if (!g_head.valid)
+        return false;
+    for (int i = 0; i < 3; ++i)
+    {
+        pos[i] = g_head.m[i][3];
+        forward[i] = -g_head.m[i][2];
+    }
+    return true;
+}
+
 unsigned RecenterCount() { return g_recenterCount; }
 
 bool HandToWorld(const float pose[3][4], float rot[9], float pos[3])
@@ -856,7 +868,11 @@ void OnPresent(IDXGISwapChain*, unsigned& syncInterval)
     if (g_stereoFrame)
     {
         g_stereoFrame = false;
-        const EyeCamera left = BuildEye(0), right = BuildEye(1);
+        const EyeCamera left = BuildEye(0);
+        EyeCamera right = BuildEye(1);
+        // The turn the left eye really rendered with. The game's camera shake (CamShake_ApplyAllViews, Frame_Update)
+        // turns view 0 after the camera apply, so it's in neither g_base nor BuildEye: without this, left eye only.
+        std::memcpy(right.rot, ViewCameras()[0].rot, sizeof(right.rot));
 
         // Left eye = the frame the game just rendered with the left camera.
         ctx->CopyResource(g_eyeTex[0], backBuffer);

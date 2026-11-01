@@ -3,6 +3,7 @@
 #include "stereo.h"
 #include "../core/log.h"
 #include "../core/settings.h"
+#include "holsters.h"
 
 #include <windows.h>
 #include <openvr.h>
@@ -18,8 +19,41 @@ namespace {
 
 constexpr const char* kLog = "avpvr_input.log";
 constexpr const char* kManifestFileName = "avpvr_actions.json";
-constexpr const char* kTouchBindingsFileName = "avpvr_bindings_oculus_touch.json";
-constexpr const char* kIndexBindingsFileName = "avpvr_bindings_knuckles.json";
+
+// The default binding files, one per SteamVR controller_type (paths from SteamVR's own input profiles, 2026-11-01; Cosmos,
+// HP and Windows MR from its remapping and compositor files, their drivers aren't part of SteamVR). SteamVR remaps the
+// Touch binding onto Pico, Focus 3, Cosmos and HP by itself, but that leaves them without Back / Start (no thumbrest) and
+// would drop every Pico 4 Ultra / Neo 3 hand (no "grip" pose); on a Vive wand all four face buttons land on the menu
+// button. Quest Pro, Quest 2 / 3 and Rift report oculus_touch.
+enum class Layout
+{
+    Touch,   // the table's paths as they are
+    Index,   // "knuckles": real Index controllers, and Virtual Desktop's Index emulation of Touch controllers
+    Frame,   // Steam Frame: real D-pad, bumpers, menu / view; A / B / X / Y are all on the right hand
+    Buttons, // Touch's buttons, no thumbrest: Back / Start on a held stick click
+    Wmr,     // sticks, and the trackpads as the face buttons + D-pad
+    Wand,    // trackpads as the sticks too
+};
+struct ControllerProfile
+{
+    const char* type;
+    Layout layout;
+    bool analogGrip;      // false = may be a plain button: LB / RB only, GripHeld then goes by those (Update)
+    const char* palmPose; // /pose/<this>: "handgrip" and "grip" are the same point where a model has both
+};
+const ControllerProfile kControllers[] = {
+    {"oculus_touch", Layout::Touch, true, "grip"},
+    {"knuckles", Layout::Index, true, "grip"},
+    {"frame_controller", Layout::Frame, true, "handgrip"},
+    {"pico_controller", Layout::Buttons, true, "handgrip"},
+    {"vive_focus3_controller", Layout::Buttons, true, "handgrip"},
+    {"vive_cosmos_controller", Layout::Buttons, false, "handgrip"},
+    {"hpmotioncontroller", Layout::Buttons, false, "handgrip"},
+    {"holographic_controller", Layout::Wmr, false, "handgrip"},
+    {"vive_controller", Layout::Wand, false, "grip"},
+};
+
+std::string BindingsFileName(const ControllerProfile& c) { return std::string("avpvr_bindings_") + c.type + ".json"; }
 
 // PAD ACTIONS: the virtual pad's buttons, one SteamVR boolean action each. Names are permanent: SteamVR keeps a saved
 // copy of a player's edited bindings keyed by them (MOHW lesson: a renamed action is silently unbound there).
@@ -73,9 +107,11 @@ int PadActionIndex(const char* name)
 std::string BuildActionManifest()
 {
     std::string s = R"({
-  "default_bindings": [
-    { "controller_type": "oculus_touch", "binding_url": "avpvr_bindings_oculus_touch.json" },
-    { "controller_type": "knuckles", "binding_url": "avpvr_bindings_knuckles.json" }
+  "default_bindings": [)";
+    for (const ControllerProfile& c : kControllers)
+        s += std::string(&c == kControllers ? "" : ",") + "\n    { \"controller_type\": \"" + c.type +
+             "\", \"binding_url\": \"" + BindingsFileName(c) + "\" }";
+    s += R"(
   ],
   "actions": [
     { "name": "/actions/main/in/RightHandAim", "type": "pose" },
@@ -132,12 +168,6 @@ struct DefaultBinding
 // also gets its click's action on "long", after this delay: held past it, the button is held for real until release.
 constexpr const char* kHoldLongPressDelay = "0.3";
 
-enum class Controller
-{
-    Touch,
-    Index, // "knuckles": real Index controllers, and Virtual Desktop's Index emulation of Touch controllers
-};
-
 // The Index layout from the table's Touch paths: left A / B stand where X / Y are, thumbstick for joystick. (2026-10-31:
 // only Touch had a default binding, so every other controller type got no input at all -- and that includes Virtual
 // Desktop users, whose driver can present Touch as Index, thumb touch on A / B rather than the trackpad.)
@@ -163,33 +193,99 @@ std::string IndexPath(std::string path)
     return path;
 }
 
+// The Steam Frame layout from the table's Touch paths: the bumpers are real ones, the grips stay the two-handed grab.
+std::string FramePath(std::string path)
+{
+    const auto swap = [&path](const char* from, const char* to) {
+        const size_t at = path.rfind(from);
+        if (at != std::string::npos && at + std::strlen(from) == path.size())
+            path = path.substr(0, at) + to;
+    };
+    swap("/left/input/x", "/right/input/x");
+    swap("/left/input/y", "/right/input/y");
+    swap("/input/joystick", "/input/thumbstick");
+    swap("/input/grip", "/input/bumper");
+    return path;
+}
+
+// A trackpad clicked as four buttons around a centre (Windows MR, Vive wand).
+constexpr const char* kTrackpadDpad = "\"deadzone_pct\": \"50\"";
+void AddTrackpadButtons(std::vector<DefaultBinding>& bindings, const char* trackpad, const char* north, const char* east,
+                        const char* south, const char* west, const char* center)
+{
+    const std::string prefix = "/actions/main/in/Pad";
+    bindings.push_back({trackpad, "dpad_click", "north", prefix + north, kTrackpadDpad});
+    bindings.push_back({trackpad, "dpad_click", "east", prefix + east, kTrackpadDpad});
+    bindings.push_back({trackpad, "dpad_click", "south", prefix + south, kTrackpadDpad});
+    bindings.push_back({trackpad, "dpad_click", "west", prefix + west, kTrackpadDpad});
+    if (center)
+        bindings.push_back({trackpad, "dpad_click", "center", prefix + center, kTrackpadDpad});
+}
+
 // A default binding, one source per path + mode (a button can carry several inputs: A = click A + double D-pad
 // down); an input bound to two actions gets a second source.
-std::string BuildBindings(Controller controller)
+std::string BuildBindings(const ControllerProfile& c)
 {
-    const bool index = controller == Controller::Index;
+    const bool index = c.layout == Layout::Index, frame = c.layout == Layout::Frame, wmr = c.layout == Layout::Wmr,
+               wand = c.layout == Layout::Wand, thumbrests = c.layout == Layout::Touch || index || frame;
     const std::string gripMode = index ? "force_sensor" : "trigger", gripInput = index ? "force" : "pull";
-    const auto path = [index](const char* touchPath) { return index ? IndexPath(touchPath) : std::string(touchPath); };
+    const auto path = [&](const char* touchPath) {
+        return index ? IndexPath(touchPath) : frame ? FramePath(touchPath) : std::string(touchPath);
+    };
     std::vector<DefaultBinding> bindings = {
         {"/user/hand/right/input/trigger", "trigger", "pull", "/actions/main/in/TriggerRight"},
         {"/user/hand/left/input/trigger", "trigger", "pull", "/actions/main/in/TriggerLeft"},
-        {"/user/hand/right/input/grip", gripMode, gripInput, "/actions/main/in/GripRight"},
-        {"/user/hand/left/input/grip", gripMode, gripInput, "/actions/main/in/GripLeft"},
-        {path("/user/hand/left/input/joystick"), "joystick", "position", "/actions/main/in/Move"},
-        {path("/user/hand/right/input/joystick"), "joystick", "position", "/actions/main/in/Turn"},
     };
+    if (c.analogGrip)
+    {
+        bindings.push_back({"/user/hand/right/input/grip", gripMode, gripInput, "/actions/main/in/GripRight"});
+        bindings.push_back({"/user/hand/left/input/grip", gripMode, gripInput, "/actions/main/in/GripLeft"});
+    }
+    if (wand)
+    {
+        bindings.push_back({"/user/hand/left/input/trackpad", "trackpad", "position", "/actions/main/in/Move"});
+        bindings.push_back({"/user/hand/right/input/trackpad", "trackpad", "position", "/actions/main/in/Turn"});
+    }
+    else
+    {
+        bindings.push_back({path("/user/hand/left/input/joystick"), "joystick", "position", "/actions/main/in/Move"});
+        bindings.push_back({path("/user/hand/right/input/joystick"), "joystick", "position", "/actions/main/in/Turn"});
+    }
     for (const PadAction& a : kPadActions)
         if (a.defaultPath)
         {
             const bool grip = std::strstr(a.defaultPath, "/input/grip") != nullptr;
+            const bool rest = std::strstr(a.defaultPath, "/input/thumbrest") != nullptr;
+            const bool stick = std::strstr(a.defaultPath, "/input/joystick") != nullptr;
+            const bool dpad = std::strcmp(a.defaultInput, "double") == 0;
+            const bool face = std::strlen(a.name) == 1; // A, B, X, Y
+            if ((rest && !thumbrests) || ((face || dpad) && (wmr || wand)) || (stick && wand) || (dpad && frame))
+                continue;
             bindings.push_back({path(a.defaultPath), a.defaultMode, a.defaultInput, PadActionName(a),
                                 index && grip ? kIndexGripButton : ""});
         }
-    if (index)
+    if (index || c.layout == Layout::Buttons)
     {
         const std::string hold = std::string("\"long_press_delay\": \"") + kStickHoldDelay + "\"";
-        bindings.push_back({"/user/hand/left/input/thumbstick", "button", "long", "/actions/main/in/PadBack", hold});
-        bindings.push_back({"/user/hand/right/input/thumbstick", "button", "long", "/actions/main/in/PadStart", hold});
+        bindings.push_back({path("/user/hand/left/input/joystick"), "button", "long", "/actions/main/in/PadBack", hold});
+        bindings.push_back({path("/user/hand/right/input/joystick"), "button", "long", "/actions/main/in/PadStart", hold});
+    }
+    if (frame)
+    {
+        bindings.push_back({"/user/hand/left/input/dpad_up", "button", "click", "/actions/main/in/PadDpadUp"});
+        bindings.push_back({"/user/hand/left/input/dpad_right", "button", "click", "/actions/main/in/PadDpadRight"});
+        bindings.push_back({"/user/hand/left/input/dpad_down", "button", "click", "/actions/main/in/PadDpadDown"});
+        bindings.push_back({"/user/hand/left/input/dpad_left", "button", "click", "/actions/main/in/PadDpadLeft"});
+        bindings.push_back({"/user/hand/left/input/view", "button", "click", "/actions/main/in/PadBack"});
+        bindings.push_back({"/user/hand/right/input/menu", "button", "click", "/actions/main/in/PadStart"});
+    }
+    if (wmr || wand)
+    {
+        AddTrackpadButtons(bindings, "/user/hand/right/input/trackpad", "Y", "B", "A", "X", wand ? "RightStick" : nullptr);
+        AddTrackpadButtons(bindings, "/user/hand/left/input/trackpad", "DpadUp", "DpadRight", "DpadDown", "DpadLeft",
+                           wand ? "LeftStick" : nullptr);
+        bindings.push_back({"/user/hand/left/input/application_menu", "button", "click", "/actions/main/in/PadBack"});
+        bindings.push_back({"/user/hand/right/input/application_menu", "button", "click", "/actions/main/in/PadStart"});
     }
 
     std::string sources;
@@ -228,7 +324,7 @@ std::string BuildBindings(Controller controller)
                    (parameters.empty() ? "" : ",\n          \"parameters\": { " + parameters + " }") + "\n        }";
     }
 
-    std::string s = std::string("{\n  \"controller_type\": \"") + (index ? "knuckles" : "oculus_touch") + R"(",
+    std::string s = std::string("{\n  \"controller_type\": \"") + c.type + R"(",
   "name": "AvP VR defaults",
   "description": "Default AvP VR bindings: a virtual Xbox pad, grips = bumpers",
   "bindings": {
@@ -236,8 +332,8 @@ std::string BuildBindings(Controller controller)
       "poses": [
         { "output": "/actions/main/in/RightHandAim", "path": "/user/hand/right/pose/tip" },
         { "output": "/actions/main/in/LeftHandAim", "path": "/user/hand/left/pose/tip" },
-        { "output": "/actions/main/in/RightHandPalm", "path": "/user/hand/right/pose/grip" },
-        { "output": "/actions/main/in/LeftHandPalm", "path": "/user/hand/left/pose/grip" }
+        { "output": "/actions/main/in/RightHandPalm", "path": "/user/hand/right/pose/)" + c.palmPose + R"(" },
+        { "output": "/actions/main/in/LeftHandPalm", "path": "/user/hand/left/pose/)" + c.palmPose + R"(" }
       ],
       "sources": [
 )";
@@ -298,7 +394,7 @@ std::atomic<float> g_moveX{0.0f}, g_moveY{0.0f}, g_turnX{0.0f}, g_turnY{0.0f};
     return h;
 }
 
-// Which controllers SteamVR reports (the default binding only applies to "oculus_touch").
+// Which controllers SteamVR reports (a type outside kControllers gets no default binding of its own).
 void LogControllers()
 {
     if (!g_system)
@@ -322,6 +418,14 @@ float Analog1(::vr::VRActionHandle_t action)
         !d.bActive)
         return 0.0f;
     return d.x;
+}
+
+bool AnalogBound(::vr::VRActionHandle_t action)
+{
+    ::vr::InputAnalogActionData_t d{};
+    return action != ::vr::k_ulInvalidActionHandle &&
+           g_input->GetAnalogActionData(action, &d, sizeof(d), ::vr::k_ulInvalidInputValueHandle) == ::vr::VRInputError_None &&
+           d.bActive;
 }
 
 bool Analog2(::vr::VRActionHandle_t action, float* x, float* y)
@@ -371,11 +475,10 @@ void Init(::vr::IVRInput* input, ::vr::IVRSystem* system, int trackingUniverse)
     g_system = system;
 
     const std::string manifestPath = ModuleDirectory() + kManifestFileName;
-    const std::string touchPath = ModuleDirectory() + kTouchBindingsFileName;
-    const std::string indexPath = ModuleDirectory() + kIndexBindingsFileName;
-    if (!WriteTextFile(manifestPath, BuildActionManifest()) ||
-        !WriteTextFile(touchPath, BuildBindings(Controller::Touch)) ||
-        !WriteTextFile(indexPath, BuildBindings(Controller::Index)))
+    bool written = WriteTextFile(manifestPath, BuildActionManifest());
+    for (const ControllerProfile& c : kControllers)
+        written = written && WriteTextFile(ModuleDirectory() + BindingsFileName(c), BuildBindings(c));
+    if (!written)
     {
         AVP_LOG(kLog, "FAILED to write the action manifest / bindings next to the DLL (%s)", manifestPath.c_str());
         return;
@@ -532,17 +635,19 @@ void Update()
             buttons |= kPadActions[i].mask;
     }
     // Left-handed: the dominant hand keeps the right trigger and bumper (fire, melee).
-    const bool leftHanded = settings::LeftHanded();
+    const bool leftHanded = holsters::LeftHandedNow();
     if (leftHanded)
         buttons = (buttons & ~0x0300u) | ((buttons & 0x0100u) << 1) | ((buttons & 0x0200u) >> 1);
     bool recenterChanged = false;
     if (Digital(g_recenter, &recenterChanged) && recenterChanged)
         stereo::RequestRecenter();
 
-    // Grips: held from 0.7, released below 0.4 (analog grips rest a little above 0 and wobble around a half press).
+    // Grips: held from 0.7, released below 0.4 (analog grips rest a little above 0 and wobble around a half press). A
+    // grip that's only a button has no analog action bound: it's held with its bumper.
+    static const int kGripPad[2] = {PadActionIndex("LB"), PadActionIndex("RB")}; // left, right
     for (int h = 0; h < 2; ++h)
     {
-        const float g = Analog1(g_grip[h]);
+        const float g = AnalogBound(g_grip[h]) ? Analog1(g_grip[h]) : Digital(g_pad[kGripPad[h]]) ? 1.0f : 0.0f;
         const bool was = g_gripHeld[h].load(std::memory_order_relaxed);
         g_gripHeld[h].store(was ? g > 0.4f : g > 0.7f, std::memory_order_relaxed);
     }

@@ -28,7 +28,7 @@ float HudWidthDeg();   // panel width (16:9)
 float HudDistance();   // metres: the eyes converge on the panel at this distance
 float HudHeightDeg();  // panel centre above straight ahead
 bool HideDuplicateTracker(); // marine: hide the flat-screen copy of the motion tracker left outside the panel
-bool HideMarineReticle();    // marine: hide the GUI pass's draw 9 (the reticle)
+bool HideMarineReticle();    // marine: the HUD's crosshair and accuracy switches held off (hooks/d3d_probe.cpp)
 // Head aim's look offset from the view (the playing class's), degrees.
 void LookOffsetDeg(float* up, float* right);
 bool HeadAim();              // the head drives the player's look / aim (vr/head_aim.h)
@@ -43,7 +43,23 @@ void GunOffset(float off[3], float angles[3]);
 bool ShotsFromGun(); // Marine: shots leave from the gun on the controller, along it (vr/shots.h)
 bool LaserSight();   // a beam along the shots' line (vr/laser.h)
 bool MuzzleFlashOnGun(); // Marine: the muzzle effects stay at the shots' origin on the gun (vr/shots.h)
+// The flash from the shot origin, per weapon: off = right, up, forward in the gun's frame (metres; the settings are cm).
+void MuzzleFlashOffset(float off[3]);
 bool LeftHanded(); // the arms' animation mirrored, the gun on the left controller, triggers and grips swapped
+// A shoulder's move for the arm IK (hand 0 left, 1 right): off = outward, up, forward (metres; the settings are cm).
+void ShoulderOffset(int hand, float off[3]);
+// Holsters (vr/holsters.h). Zones in setting order; offsets = right, up, forward from the head (metres). Stomach and hip
+// are mirrored pairs: their right is the distance to each side.
+constexpr int kHolsterStomach = 0, kHolsterHip = 1, kHolsterChest = 2, kHolsterLeftShoulder = 3,
+              kHolsterRightShoulder = 4, kHolsterZoneCount = 5;
+bool Holsters();
+bool HolsterGrabHand();   // the Marine's weapon goes to the hand that grabbed it
+bool HolsterHoldToKeep(); // ... only while that grip is held
+bool ShowGrabZones();     // draws every grab zone in the headset (vr/grab_view.h)
+float HolsterRadius();
+float HolsterDrop();      // metres, + lower
+void HolsterOffset(int zone, float off[3]);
+unsigned HolsterActionMask(int zone); // the XInput button the zone presses, 0 = none
 // The shots' line on the gun: off = origin right, up, forward from the gun model's origin in its own frame (metres;
 // the settings are cm); angles = pitch (+ up), yaw (+ right) from the barrel, degrees.
 void ShotOffset(float off[3], float angles[2]);

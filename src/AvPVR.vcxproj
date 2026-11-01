@@ -93,6 +93,8 @@
     <ClCompile Include="hooks\video_hook.cpp" />
     <ClCompile Include="hooks\first_person.cpp" />
     <ClCompile Include="vr\head_aim.cpp" />
+    <ClCompile Include="vr\grab_view.cpp" />
+    <ClCompile Include="vr\holsters.cpp" />
     <ClCompile Include="vr\shots.cpp" />
     <ClCompile Include="vr\laser.cpp" />
     <ClCompile Include="vr\opaque_pass.cpp" />
@@ -124,6 +126,8 @@
     <ClInclude Include="hooks\video_hook.h" />
     <ClInclude Include="hooks\first_person.h" />
     <ClInclude Include="vr\head_aim.h" />
+    <ClInclude Include="vr\grab_view.h" />
+    <ClInclude Include="vr\holsters.h" />
     <ClInclude Include="vr\shots.h" />
     <ClInclude Include="vr\laser.h" />
     <ClInclude Include="vr\opaque_pass.h" />

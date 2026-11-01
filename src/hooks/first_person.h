@@ -45,4 +45,8 @@ bool GunPlacement(float m[16], float placedOrigin[3] = nullptr);
 // the XInput hook drops the left bumper it also presses (LeftHanded swaps the bumpers with the hands). Any thread.
 bool LeftGripOnGun();
 
+// The two-handed grab zone, for the grab zone view: its line along the barrel (world) and its radius. False when the
+// grab isn't available.
+bool TwoHandBand(float start[3], float end[3], float* radius);
+
 } // namespace avp::fp

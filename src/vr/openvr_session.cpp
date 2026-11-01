@@ -1,6 +1,7 @@
 #include "openvr_session.h"
 
 #include "dashboard.h"
+#include "grab_view.h"
 #include "laser.h"
 #include "vr_input.h"
 #include "../core/log.h"
@@ -108,6 +109,7 @@ void Connect()
             g_overlay ? "yes" : "NO");
     dashboard::Start(g_overlay);
     laser::Start(g_overlay, static_cast<int>(g_universe));
+    grabview::Start(g_overlay, static_cast<int>(g_universe));
     auto* vrInput = static_cast<::vr::IVRInput*>(get(::vr::IVRInput_Version, &err));
     if (vrInput)
         input::Init(vrInput, g_system, static_cast<int>(g_universe));
@@ -149,6 +151,7 @@ void ShutdownForExit(const char* why)
     AVP_LOG(kLog, "game quitting (%s): shutting SteamVR down", why);
     dashboard::Stop();
     laser::Stop();
+    grabview::Stop();
     AVP_LOG(kLog, "  dashboard stopped");
     input::Shutdown();
     {

@@ -4,6 +4,7 @@
 #include "../core/log.h"
 #include "../core/settings.h"
 #include "first_person.h"
+#include "../vr/holsters.h"
 #include "../vr/vr_input.h"
 
 #include <MinHook.h>
@@ -82,7 +83,7 @@ DWORD WINAPI Hooked(DWORD userIndex, XINPUT_STATE* state)
         pad.sThumbRY = ToThumb(vr.turnY / fullAt * speed);
     }
     // The left grip is the left bumper, and the Marine's two-handed grab on the gun: there it isn't LB.
-    pad.wButtons |= fp::LeftGripOnGun() ? (vr.buttons & ~XINPUT_GAMEPAD_LEFT_SHOULDER) : vr.buttons;
+    pad.wButtons |= holsters::Apply(fp::LeftGripOnGun() ? (vr.buttons & ~XINPUT_GAMEPAD_LEFT_SHOULDER) : vr.buttons);
     if (vr.leftTrigger > pad.bLeftTrigger)
         pad.bLeftTrigger = vr.leftTrigger;
     if (vr.rightTrigger > pad.bRightTrigger)

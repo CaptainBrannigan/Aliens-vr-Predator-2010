@@ -13,8 +13,8 @@
 //
 // The muzzle flash is a particle effect that spawns at that position, then follows a socket of the game's model through
 // an attachment node (FINDINGS section 13); those sockets don't know about the drawn gun, which is moved in the bone
-// buffer only. With MuzzleFlashOnGun on, every effect node on the muzzle socket is pinned to the shots' origin each
-// frame, through the flags that stop the game writing the node. Data writes only.
+// buffer only. With MuzzleFlashOnGun on, every effect node on the muzzle socket is pinned to the shots' origin plus the
+// per-weapon muzzle flash offsets each frame, through the flags that stop the game writing the node. Data writes only.
 //
 // Log: avpvr_shots.log.
 

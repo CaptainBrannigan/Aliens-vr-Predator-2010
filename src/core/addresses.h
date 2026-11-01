@@ -139,6 +139,10 @@ constexpr uintptr_t kNodeChildModelSlot = 0x24;  // vtable: thiscall returning t
 constexpr uintptr_t vt_ScreenWarp                = 0x00933578;
 constexpr uintptr_t ScreenWarp_Draw              = 0x0081FEB0;
 
+// ---- HUD cvars (2026-11-01): bools the HUD reads; the game rewrites them from the character update ----
+constexpr uintptr_t cvar_HudShowCrosshair        = 0x00A6694A; // "AVP.HUD.ShowCrosshair", written by 006AA920
+constexpr uintptr_t cvar_HudShowWeaponAccuracy   = 0x00A6668D; // "AVP.HUD.ShowWeaponAccuracy", written by 0069C0B0
+
 // ---- Input ----
 constexpr uintptr_t Input_GetActionValue         = 0x0060DED0;
 constexpr uintptr_t Input_ConsumeAction          = 0x0060DF40;

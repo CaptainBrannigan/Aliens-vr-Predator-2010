@@ -29,7 +29,7 @@ the heap, everything else inside system DLLs (d3d11, dxgi, xinput1_3, binkw32) o
 | `src/proxy` | `dxgi.dll` proxy entry point and exports, mod initialization |
 | `src/core` | Logger, crash forensics, build detection, `addresses.h`, `settings` (the settings table, profiles + ini), developer flags |
 | `src/hooks` | Shadow vtables (CEG-safe virtual hooks), D3D11 hooks (counts, HUD panel, debug hiding), first-person body / weapon (bone buffer rewrite: arm IK, animation layering, torso turn, bone hide, weapon placement), XInput virtual pad, Bink movies, screen warp effects, trace/snapshot logging, old experiments |
-| `src/vr` | SteamVR session (connection, poses, submit, flat screen and its opaque pass), stereo rendering and head position, dashboard tab, SteamVR Input, head aim, shots from the gun, laser overlay |
+| `src/vr` | SteamVR session (connection, poses, submit, flat screen and its opaque pass), stereo rendering and head position, dashboard tab, SteamVR Input, head aim, shots from the gun, laser overlay, holsters and the grab zone view |
 | `docs/re` | Reverse-engineering notes: `FINDINGS.md`, `FUNCTIONS.md` (generated), `TODO_AND_DECISIONS.md`, `avp_symbols.csv` |
 | `tools/ghidra` | Headless Ghidra scripts (`run.ps1` wrapper; `ApplySymbols.java` pushes the CSV names into the project) |
 | `tools/gen_functions_md.ps1` | Regenerates `docs/re/FUNCTIONS.md` from `avp_symbols.csv` |
@@ -38,6 +38,17 @@ the heap, everything else inside system DLLs (d3d11, dxgi, xinput1_3, binkw32) o
 | `third_party` | MinHook, OpenVR headers |
 
 ## Version history
+
+**1.4 (2026-11-01)**
+- Left-handed mode: the arms take each other's animation, mirrored about the view; the Marine's whole upper body
+  mirrors, the Predator's arms keep their shoulders on its chest. The gun moves to the left controller, unmirrored;
+  triggers and grips swap.
+- Muzzle flash on the held gun, per-weapon offsets (data writes on the effect's attachment node).
+- Holsters and grab regions, per-shoulder offsets and the grab zone view, ported from the MOHW mod (manual reloading
+  isn't). Holster presses go through the virtual pad; a weapon grab can swap the weapon hand.
+- Reticle hide through the HUD's own cvars instead of a draw number; right eye takes the camera shake.
+- Dashboard scrolls; per-eye draw comparison in `avpvr_d3d.log` ("eyes differ:") for left-eye-only effects.
+- Default bindings for more controller types.
 
 **1.0 (2026-10-22)**
 - Natural elbow model: the elbows follow the wrist's roll (from the aim pose, about the forearm), through soft-knee

@@ -43,6 +43,13 @@ struct HitBox
     int steps;
 };
 constexpr int kRecenterButton = -100;
+constexpr int kScrollUpButton = -101;
+constexpr int kScrollDownButton = -102;
+constexpr int kScrollButtonWidth = 150;
+constexpr int kScrollButtonStep = 6 * kRowHeight;
+constexpr float kScrollStickPixels = 60.0f; // per unit of a smooth scroll event's delta
+constexpr int kScrollBarX = 2384;
+constexpr int kScrollBarWidth = 8;
 
 ::vr::IVROverlay* g_overlay = nullptr;
 std::atomic<bool> g_stop{false};
@@ -53,6 +60,9 @@ HANDLE g_stopped = nullptr; // set by the thread on exit
 // Overlay thread only.
 std::vector<HitBox> g_hits;
 int g_hover = -1;
+// The columns under the title scroll together: pixels scrolled, and the most there is (DrawMenu, from the tallest).
+float g_scroll = 0.0f;
+int g_maxScroll = 0;
 
 int ColumnForGroup(const char* group)
 {
@@ -61,7 +71,7 @@ int ColumnForGroup(const char* group)
     if (strcmp(group, "Controls") == 0 || strcmp(group, "Head look") == 0 || strcmp(group, "Hands") == 0 ||
         strcmp(group, "Debug") == 0)
         return 1;
-    if (strcmp(group, "Weapon") == 0 || strcmp(group, "Hand placement") == 0)
+    if (strcmp(group, "Weapon") == 0 || strcmp(group, "Hand placement") == 0 || strcmp(group, "Holsters") == 0)
         return 2;
     return 0;
 }
@@ -172,12 +182,21 @@ void DrawMenu(Canvas& c)
 
     RECT title{kColumnX[0], 0, kWidth - 30, kTitleHeight};
     c.Text("AvP VR settings", title, titleFont, kAccent, DT_LEFT);
-    RECT hint{kColumnX[0] + 300, 0, kWidth - 280, kTitleHeight};
+    RECT hint{kColumnX[0] + 300, 0, kWidth - 620, kTitleHeight};
     c.Text("Changes apply and save immediately", hint, smallFont, kDimText, DT_LEFT);
     RECT recenter{kWidth - 30 - 220, 18, kWidth - 30, kTitleHeight - 14};
     DrawButton(c, recenter, "Recenter view", rowFont, kButton, kRecenterButton, 0);
+    if (g_maxScroll > 0)
+    {
+        RECT down{recenter.left - 12 - kScrollButtonWidth, recenter.top, recenter.left - 12, recenter.bottom};
+        RECT up{down.left - 8 - kScrollButtonWidth, recenter.top, down.left - 8, recenter.bottom};
+        DrawButton(c, up, "Scroll up", rowFont, kButton, kScrollUpButton, 0);
+        DrawButton(c, down, "Scroll down", rowFont, kButton, kScrollDownButton, 0);
+    }
+    const int scroll = static_cast<int>(g_scroll);
+    auto inView = [&](const RECT& r) { return r.top >= kTitleHeight && r.bottom <= kHeight; };
 
-    int y[kColumnCount] = {kTitleHeight, kTitleHeight, kTitleHeight};
+    int y[kColumnCount] = {kTitleHeight - scroll, kTitleHeight - scroll, kTitleHeight - scroll};
     const char* lastGroup[kColumnCount] = {nullptr, nullptr, nullptr};
     int parity[kColumnCount] = {0, 0, 0};
     for (int i = 0, n = settings::MenuCount(); i < n; ++i)
@@ -190,16 +209,18 @@ void DrawMenu(Canvas& c)
         if (!lastGroup[col] || strcmp(lastGroup[col], info.group) != 0)
         {
             RECT header{x, y[col] + 6, x + kColumnWidth, y[col] + kHeaderHeight};
-            c.Text(info.group, header, headerFont, kAccent, DT_LEFT);
+            if (inView(header))
+                c.Text(info.group, header, headerFont, kAccent, DT_LEFT);
             y[col] += kHeaderHeight;
             lastGroup[col] = info.group;
             parity[col] = 0;
         }
         RECT row{x, y[col], x + kColumnWidth, y[col] + kRowHeight};
         y[col] += kRowHeight;
-        if (row.bottom > kHeight)
+        const COLORREF rowColor = (parity[col]++ & 1) ? kRowB : kRowA;
+        if (!inView(row))
             continue;
-        c.Fill(row, (parity[col]++ & 1) ? kRowB : kRowA);
+        c.Fill(row, rowColor);
         const int right = x + kColumnWidth - 8;
         const int top = row.top + 3, bottom = row.bottom - 3;
         if (info.isToggle)
@@ -251,6 +272,34 @@ void DrawMenu(Canvas& c)
             }
         }
     }
+
+    int bottom = 0;
+    for (int col = 0; col < kColumnCount; ++col)
+        bottom = y[col] + scroll > bottom ? y[col] + scroll : bottom;
+    const int maxScroll = bottom > kHeight ? bottom - kHeight : 0;
+    if (maxScroll != g_maxScroll)
+    {
+        g_maxScroll = maxScroll;
+        if (g_scroll > maxScroll)
+            g_scroll = static_cast<float>(maxScroll);
+    }
+    if (g_maxScroll > 0)
+    {
+        // The scroll bar: where the view sits in the whole.
+        const int track = kHeight - kTitleHeight, whole = track + g_maxScroll;
+        const int top = kTitleHeight + track * static_cast<int>(g_scroll) / whole;
+        c.Fill(RECT{kScrollBarX, kTitleHeight, kScrollBarX + kScrollBarWidth, kHeight}, kRowA);
+        c.Fill(RECT{kScrollBarX, top, kScrollBarX + kScrollBarWidth, top + track * track / whole}, kAccent);
+    }
+}
+
+void ScrollBy(float pixels)
+{
+    g_scroll += pixels;
+    if (g_scroll > g_maxScroll)
+        g_scroll = static_cast<float>(g_maxScroll);
+    if (g_scroll < 0.0f)
+        g_scroll = 0.0f;
 }
 
 void DrawThumbnail(Canvas& c)
@@ -317,10 +366,19 @@ void ThreadProc()
                 {
                     if (g_hits[hit].index == kRecenterButton)
                         stereo::RequestRecenter();
+                    else if (g_hits[hit].index == kScrollUpButton)
+                        ScrollBy(-kScrollButtonStep);
+                    else if (g_hits[hit].index == kScrollDownButton)
+                        ScrollBy(kScrollButtonStep);
                     else
                         settings::AdjustMenu(g_hits[hit].index, g_hits[hit].steps);
                     dirty = true;
                 }
+            }
+            else if (ev.eventType == ::vr::VREvent_ScrollSmooth) // the controller's stick over the overlay
+            {
+                ScrollBy(-ev.data.scroll.ydelta * kScrollStickPixels);
+                dirty = true;
             }
             ev = ::vr::VREvent_t{};
         }
@@ -359,6 +417,7 @@ void Start(::vr::IVROverlay* overlay)
             overlay->SetOverlayWidthInMeters(g_main, 3.0f);
             overlay->SetOverlayInputMethod(g_main, ::vr::VROverlayInputMethod_Mouse);
             overlay->SetOverlayMouseScale(g_main, &scale);
+            overlay->SetOverlayFlag(g_main, ::vr::VROverlayFlags_SendVRSmoothScrollEvents, true);
         }
     }
     AVP_LOG(kLog, "CreateDashboardOverlay err=%d main=%llu thumb=%llu", err, static_cast<unsigned long long>(g_main),

@@ -731,6 +731,31 @@ void EndGuiFrame()
     g_guiDrawsThisFrame = 0;
 }
 
+// ---- What one eye drew and the other didn't (left-eye-only effects; game render and right eye's) ----
+uint32_t g_eyeDraws[2][kHudPassCount + 1] = {}, g_eyeIndices[2][kHudPassCount + 1] = {};
+
+// After the right eye's render: the two renders' passes compared, a line per pass that differs (at most once a second).
+// A little difference in the 3D passes is normal (each eye culls for itself).
+void CompareEyes()
+{
+    static DWORD lastLog = 0;
+    static int logs = 0;
+    const DWORD now = GetTickCount();
+    const bool log = logs < 400 && now - lastLog >= 1000;
+    for (int p = 0; p <= kHudPassCount; ++p)
+    {
+        if (log && (g_eyeDraws[0][p] != g_eyeDraws[1][p] || g_eyeIndices[0][p] != g_eyeIndices[1][p]))
+        {
+            lastLog = now;
+            ++logs;
+            AVP_LOG(kLog, "eyes differ: pass '%s': left %u draws %u indices, right %u draws %u indices", HudPassLabel(p),
+                    g_eyeDraws[0][p], g_eyeIndices[0][p], g_eyeDraws[1][p], g_eyeIndices[1][p]);
+        }
+    }
+    std::memset(g_eyeDraws, 0, sizeof(g_eyeDraws));
+    std::memset(g_eyeIndices, 0, sizeof(g_eyeIndices));
+}
+
 bool HudBeforeDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count, UINT start, INT base)
 {
     const bool inEye = stereo::InEyeRender();
@@ -740,8 +765,19 @@ bool HudBeforeDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count, UINT start
             ForgetTrackerTextures(); // VR gameplay stopped (menu, loading): the next level has new textures
         return false;
     }
+    // Marine reticle (setting HideMarineReticle): through the HUD's own switches. No draw number can find it: the GUI
+    // pass batches by texture, its 8-28 draws change with what's on the HUD, and the reticle shares a batch with others
+    // (live 2026-11-01: #9, 108 indices with the pistol; #7, 114 with the pulse rifle). The game sets these back every
+    // update, hence each draw.
+    if (settings::HideMarineReticle() && Global<int>(addr::g_PlayerSpecies) == 2)
+    {
+        Global<uint8_t>(addr::cvar_HudShowCrosshair) = 0;
+        Global<uint8_t>(addr::cvar_HudShowWeaponAccuracy) = 0;
+    }
     const int pass = inEye ? CurrentHudPass(esp) : -1;
     const int passKey = pass >= 0 ? pass : kHidePassUnlisted;
+    ++g_eyeDraws[g_secondRender ? 1 : 0][passKey];
+    g_eyeIndices[g_secondRender ? 1 : 0][passKey] += count;
     if (passKey != g_curPass)
     {
         g_curPass = passKey;
@@ -783,20 +819,6 @@ bool HudBeforeDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count, UINT start
                 LogHiddenDraw(c, passKey, hideDraw, count);
             return true;
         }
-    }
-
-    // Marine reticle (settings HideMarineReticle): the GUI pass's 1st draw (user-found with the debug rows,
-    // 2026-10-18; it was the 9th on 2026-10-17 -- the GUI pass's draws shifted since; not the reticle for the Alien or
-    // Predator). Its signature is logged for a sturdier match later.
-    if (pass == kGuiPass && g_drawInPass == 1 && settings::HideMarineReticle() && Global<int>(addr::g_PlayerSpecies) == 2)
-    {
-        static int logged = 0;
-        if (logged < 3)
-        {
-            ++logged;
-            LogHiddenDraw(c, passKey, 1, count);
-        }
-        return true;
     }
 
     if (!inEye)
@@ -1159,7 +1181,12 @@ void ResetHudViewport(ID3D11DeviceContext* ctx)
     g_curPass = -1; // the next eye render starts counting its passes afresh
 }
 
-void SetSecondRender(bool on) { g_secondRender = on; }
+void SetSecondRender(bool on)
+{
+    if (g_secondRender && !on)
+        CompareEyes();
+    g_secondRender = on;
+}
 
 void SetModDraws(bool on) { g_modDraws = on; }
 

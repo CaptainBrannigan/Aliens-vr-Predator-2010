@@ -25,8 +25,9 @@ constexpr float kLaserLength = 30.0f; // world units (~metres)
 // The shots' line on the drawn gun: from the placed weapon model's origin (at the hand) plus the shot origin offsets
 // in the gun's frame, along the game's direction carried through the placement plus the shot angle offsets. The
 // gun's frame = the game camera's axes through the placement's turn (the drawn gun sits on the controller as the
-// game's sits before the camera). m (optional) = the placement (fp::GunPlacement).
-bool GunRay(const float gameDir[3], float pos[3], float dir[3], float* mOut = nullptr)
+// game's sits before the camera). m (optional) = the placement (fp::GunPlacement); axisOut (optional) = the gun's right,
+// down, forward.
+bool GunRay(const float gameDir[3], float pos[3], float dir[3], float* mOut = nullptr, float (*axisOut)[3] = nullptr)
 {
     float m[16], origin[3];
     if (!fp::GunPlacement(m, origin))
@@ -62,6 +63,8 @@ bool GunRay(const float gameDir[3], float pos[3], float dir[3], float* mOut = nu
         dir[j] = d[j] / len;
     if (mOut)
         std::memcpy(mOut, m, sizeof(m));
+    if (axisOut)
+        std::memcpy(axisOut, axis, sizeof(axis));
     return true;
 }
 
@@ -321,9 +324,12 @@ void OnCameraApply()
     if (!character)
         return;
     FlashWalk w{};
-    float dir[3];
-    if (!GunRay(g_flashLook, w.pos, dir))
+    float dir[3], axis[3][3], off[3];
+    if (!GunRay(g_flashLook, w.pos, dir, nullptr, axis))
         return;
+    settings::MuzzleFlashOffset(off);
+    for (int j = 0; j < 3; ++j)
+        w.pos[j] += off[0] * axis[0][j] - off[1] * axis[1][j] + off[2] * axis[2][j];
     DirectionToQuat(dir, w.quat);
     w.budget = kMaxNodes;
     const bool walked = WalkCharacter(character, w);

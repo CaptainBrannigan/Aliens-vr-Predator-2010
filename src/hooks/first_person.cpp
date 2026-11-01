@@ -4,6 +4,7 @@
 #include "../core/addresses.h"
 #include "../core/log.h"
 #include "../core/settings.h"
+#include "../vr/holsters.h"
 #include "../vr/stereo.h"
 #include "../vr/vr_input.h"
 
@@ -707,13 +708,13 @@ bool ElbowFromModel(int hand, const ArmRig& r, float* buffer, const float winv[1
 // bone map the whole arm moves rigidly with the hand.
 bool TwoHandAimDelta(float d[16]); // below, with the two-handed aim
 // The hand holding the gun (0 left, 1 right): the left with setting LeftHanded.
-int GunHand() { return settings::LeftHanded() ? 0 : 1; }
+int GunHand() { return holsters::LeftHandedNow() ? 0 : 1; }
 // The gun's frame on its controller. The gun offsets are one set, mirrored for the left hand like the hand offsets.
 bool GunControllerWorld(float rot[9], float pos[3])
 {
     float off[3], angles[3];
     settings::GunOffset(off, angles);
-    if (settings::LeftHanded())
+    if (holsters::LeftHandedNow())
         off[0] = -off[0], angles[1] = -angles[1], angles[2] = -angles[2];
     return ControllerWorld(GunHand(), off, angles, rot, pos);
 }
@@ -833,9 +834,17 @@ bool ArmToController(float* buffer, int hand, const ArmRig& r)
             handRot[i * 3 + k] = tm[i * 4 + k];
 
     // Reach: shoulder -> target, clamped to what the two lengths allow (the shoulder follows past full reach).
+    // This shoulder moved by its settings: outward (away from the body, either side), up, forward (model: x the body's
+    // forward or back, y down, z sideways).
+    float shoulderOffset[3], chestNow[16];
+    settings::ShoulderOffset(hand, shoulderOffset);
+    ReadBone(BoneSlot(buffer, r.chest), chestNow, &factor);
+    const float outwardZ = ((hand ? 1.0f : -1.0f) * chestNow[2] >= 0.0f ? 1.0f : -1.0f) * shoulderOffset[0];
     float shoulder2[3], n[3];
-    std::memcpy(shoulder2, shoulder, sizeof(shoulder2));
-    Sub3(wrist2, shoulder, n);
+    shoulder2[0] = shoulder[0] + g_bodyForwardSign * shoulderOffset[2];
+    shoulder2[1] = shoulder[1] - shoulderOffset[1];
+    shoulder2[2] = shoulder[2] + outwardZ;
+    Sub3(wrist2, shoulder2, n);
     const float wanted = Len3(n);
     if (!Normalize3(n))
         return rigid("hand on the shoulder");
@@ -1270,7 +1279,8 @@ bool IsMarineHandBone(int b)
 bool TurnTorso(float* buffer)
 {
     const int first = kMarineStomach;
-    const float degrees = settings::TorsoTurnDeg();
+    // Left-handed the stance it corrects is mirrored (MirrorArms), so the turn is too.
+    const float degrees = settings::TorsoTurnDeg() * (holsters::LeftHandedNow() ? -1.0f : 1.0f);
     if (!g_haveCentroids || degrees == 0.0f || g_boneWeight[first] <= 0.0f)
         return false;
     float w[16], winv[16], fwd[3], up[3];
@@ -1318,8 +1328,15 @@ bool HideBones(float* buffer)
 // ---- Left-handed (setting LeftHanded, 2026-10-31) ----
 // Each arm takes the other's animation, reflected: the rigs are symmetric in bind space about x = 0, so a bone's new
 // matrix = B * partner * C, B the bind-space reflection and C the same reflection about the chest (S^-1 * B * S of the
-// chest bone), so it holds however the torso is posed. Two reflections: still a rotation, nothing to change in the
+// chest bone), so it fits the torso however it's posed. Two reflections: still a rotation, nothing to change in the
 // draw state. The gun's model isn't symmetric, so it isn't mirrored: it just goes on the left controller.
+// The arm from the upper arm down is reflected about the view instead (the plane through the chest along the game
+// camera's forward and up), then moved back so its shoulder stays where the chest's reflection put it. A hand keeps
+// the angle it had to the camera (ArmToController), so that angle has to be the mirror of the other hand's: reflected
+// about a chest turned from the view by a, both hands came out turned by 2a the same way (the Marine's stance, 90
+// degrees to the right, 2026-11-01; the Predator's chest faces the view).
+// The Marine's stance is in the torso too (it leans and turns with the gun: the shoulders sat high on one side, low
+// and forward on the other, 2026-11-01), so its whole upper body is reflected about the view, through the stomach.
 void BuildMirrorPairs(const ArmRig* arms)
 {
     for (int& p : g_mirrorPartner)
@@ -1329,8 +1346,18 @@ void BuildMirrorPairs(const ArmRig* arms)
                     dz = g_boneCentroid[a][2] - g_boneCentroid[b][2];
         return std::sqrt(dx * dx + dy * dy + dz * dz);
     };
+    constexpr float kMatchM = 0.05f;
     // Clavicle to hand, in step on both sides: the Marine's 6-27 / 28-49 (shoulder pads too), the Predator's 6-24 / 30-48.
     const bool marine = Global<int>(addr::g_PlayerSpecies) == 2;
+    if (marine)
+    {
+        // The Marine's middle bones are their own opposites; the front pouches swap if they're a pair.
+        for (int b : {2, 3, 4, 5, 50})
+            g_mirrorPartner[b] = b;
+        const bool pouchPair = gap(51, 52) < kMatchM;
+        g_mirrorPartner[51] = pouchPair ? 52 : 51;
+        g_mirrorPartner[52] = pouchPair ? 51 : 52;
+    }
     const int first = 6, last = marine ? 27 : 24, offset = marine ? 22 : 24;
     float worst = 0.0f;
     int worstBone = -1;
@@ -1343,7 +1370,6 @@ void BuildMirrorPairs(const ArmRig* arms)
     }
     // The bones at the wrist don't line up on the Predator (its gauntlets differ): the nearest reflected one, else
     // MirrorArms has it ride its forearm.
-    constexpr float kMatchM = 0.05f;
     int matched = 0;
     for (int a : arms[0].wrist)
     {
@@ -1390,6 +1416,95 @@ bool MirrorArms(const ArmRig* arms, float* buffer)
         Mul4(s, c, m);
         WriteBone(BoneSlot(buffer, b), m, BoneSlot(buffer, b)[10]); // the slot keeps its own factor
     }
+
+    // About the view: W * Rw * W^-1, Rw the world reflection through the chest (the Marine: the stomach).
+    const bool marine = Global<int>(addr::g_PlayerSpecies) == 2;
+    float world[16], worldInv[16], camRot[9], camPos[3], chestWorld[3];
+    std::memcpy(world, g_snap, sizeof(world));
+    stereo::GameCamera(camRot, camPos);
+    float n[3] = {camRot[0], camRot[3], camRot[6]};
+    if (!InverseAffine(world, worldInv) || !Normalize3(n))
+        return true;
+    {
+        const int pivotBone = marine ? kMarineStomach : arms[0].chest;
+        const float* cc = g_boneCentroid[pivotBone];
+        const float pivotBind[3] = {0.0f, cc[1], cc[2]};
+        float pivotModel[3], ps[16];
+        ReadBone(BoneSlot(g_snap, pivotBone), ps, &factor);
+        PointTimes(pivotBind, ps, pivotModel);
+        PointTimes(pivotModel, world, chestWorld);
+    }
+    float rw[16] = {}, wr[16], view[16];
+    const float along = 2.0f * Dot3(chestWorld, n);
+    for (int i = 0; i < 3; ++i)
+    {
+        for (int j = 0; j < 3; ++j)
+            rw[i * 4 + j] = (i == j ? 1.0f : 0.0f) - 2.0f * n[i] * n[j];
+        rw[12 + i] = along * n[i];
+    }
+    rw[15] = 1.0f;
+    Mul4(world, rw, wr);
+    Mul4(wr, worldInv, view);
+    auto viewBone = [&](int b, float m[16]) {
+        float s[16], unused;
+        ReadBone(BoneSlot(g_snap, g_mirrorPartner[b]), s, &unused);
+        for (int k = 0; k < 3; ++k)
+            s[k] = -s[k];
+        Mul4(s, view, m);
+    };
+    if (marine)
+        for (int b = 0; b < kMaxBones; ++b)
+            if (g_mirrorPartner[b] >= 0)
+            {
+                float m[16];
+                viewBone(b, m);
+                WriteBone(BoneSlot(buffer, b), m, BoneSlot(buffer, b)[10]);
+            }
+    for (int h = 0; h < 2 && !marine; ++h)
+    {
+        const ArmRig& r = arms[h];
+        if (g_mirrorPartner[r.upper] < 0)
+            continue;
+        // The shoulder stays with the chest's reflection, already in buffer.
+        float kept[16], moved[16], at[3], now[3], delta[3];
+        const float* root = g_haveJoints[h] ? g_armJoint[h][0] : g_boneCentroid[r.upper];
+        ReadBone(BoneSlot(buffer, r.upper), kept, &factor);
+        viewBone(r.upper, moved);
+        PointTimes(root, kept, at);
+        PointTimes(root, moved, now);
+        Sub3(at, now, delta);
+        auto place = [&](int b, bool withShoulder) {
+            if (b < 0 || g_mirrorPartner[b] < 0)
+                return;
+            float m[16];
+            viewBone(b, m);
+            if (withShoulder)
+                for (int k = 0; k < 3; ++k)
+                    m[12 + k] += delta[k];
+            WriteBone(BoneSlot(buffer, b), m, BoneSlot(buffer, b)[10]);
+        };
+        place(r.upper, true);
+        place(r.upperTwist, true);
+        place(r.fore, true);
+        for (int b : r.wrist)
+            place(b, true);
+        // Not the hands: the two shoulders' shifts are opposite (up to tens of cm on a turned chest), and the hands'
+        // mirrored distance apart is the off hand's grip on the gun when two-handed (ArmToController). The arm's IK
+        // reaches the hand wherever it ends up.
+        for (int b = r.handFirst; b <= r.handLast; ++b)
+            place(b, false);
+    }
+    static DWORD lastLog = 0;
+    if (GetTickCount() - lastLog > 5000)
+    {
+        lastLog = GetTickCount();
+        float x[3];
+        for (int j = 0; j < 3; ++j)
+            x[j] = chest[0] * world[0 * 4 + j] + chest[1] * world[1 * 4 + j] + chest[2] * world[2 * 4 + j];
+        if (Normalize3(x))
+            AVP_LOG(kLog, "left-handed: the chest is turned %.0f deg from the view", std::acos(Dot3(x, n)) * 57.29578f);
+    }
+
     for (int h = 0; h < 2; ++h)
         for (int w : arms[h].wrist)
         {
@@ -1467,7 +1582,7 @@ void StartModel(ID3D11DeviceContext* c, ID3D11Buffer* vb, bool secondRender)
             g_gameHandTick = GetTickCount();
             std::memcpy(g_layerHand, g_gameHand, sizeof(g_layerHand));
         }
-        if (settings::LeftHanded() && settings::ArmsFollowControllers() && arms && MirrorArms(arms, copy))
+        if (holsters::LeftHandedNow() && settings::ArmsFollowControllers() && arms && MirrorArms(arms, copy))
         {
             changed = true;
             for (int h = 0; h < 2; ++h)
@@ -1879,6 +1994,7 @@ void OnDraw(ID3D11DeviceContext* c, int pass, unsigned drawNo, unsigned indexCou
 void OnPresent(ID3D11DeviceContext* ctx)
 {
     UpdateTwoHanded();
+    holsters::Update();
     ChooseGun();
     // The species' body / IK values (settings profiles), switched when the playing species changes.
     static int lastSpecies = -1;
@@ -1948,5 +2064,22 @@ bool GunPlacement(float m[16], float placedOrigin[3])
 }
 
 bool LeftGripOnGun() { return g_leftGripOnGun.load(std::memory_order_relaxed); }
+
+bool TwoHandBand(float start[3], float end[3], float* radius)
+{
+    if (!settings::TwoHandedAim() || !settings::GunOnRightController() || Global<int>(addr::g_PlayerSpecies) != 2)
+        return false;
+    float rot[9], pos[3], reach, grip[2];
+    settings::TwoHandParams(radius, &reach, grip);
+    if (!GunControllerWorld(rot, pos))
+        return false;
+    for (int k = 0; k < 3; ++k)
+    {
+        const float forward = rot[k * 3 + 2];
+        start[k] = pos[k] + forward * 0.05f; // as UpdateTwoHanded's zone
+        end[k] = pos[k] + forward * reach;
+    }
+    return true;
+}
 
 } // namespace avp::fp

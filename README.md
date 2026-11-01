@@ -5,16 +5,21 @@ This mod is a proxy `dxgi.dll` that hooks the game's rendering and input and tal
 the game: stereo 3D for all three species, head-tracked look and movement, the Marine's gun and the arms of the
 Marine and the Predator on your motion controllers, and an in-headset settings menu.
 
-**Status: 1.0, a hobby reverse-engineering project.** Everything listed below works; see
-[Known issues](#known-issues) and [Planned](#planned) for what isn't done yet.
+**Status: 1.4, a hobby reverse-engineering project.** See [Known issues](#known-issues) and [Planned](#planned) for
+what isn't done yet.
+
+> **SteamVR is the only runtime targeted.** The mod talks to SteamVR through its `openvr_api.dll` and nothing else: it
+> doesn't use OpenXR. **Virtual Desktop users on VDXR need to be in SteamVR:** start SteamVR, then launch the game from
+> there. VDXR on its own won't work.
 
 ## Requirements
 
 - Aliens vs Predator (the Steam PC release), its **DirectX 11** version, `AvP_DX11.exe`. The DirectX 9 `AvP.exe` isn't
   supported.
 - SteamVR **2.17 or newer** (the release that added a 32-bit runtime), with a headset and motion controllers.
-  Developed and tested on a Meta Quest 3 over Steam Link with Touch controllers; other headsets should work. Touch and
-  Valve Index controllers get default bindings (Virtual Desktop included); others need a binding made in SteamVR.
+  Developed and tested on a Meta Quest 3 over Steam Link with Touch controllers; other headsets should work. Quest, Rift,
+  Valve Index, Steam Frame, Pico, Vive (wands, Cosmos, Focus 3), HP Reverb G2 and Windows MR controllers get default
+  bindings (Virtual Desktop included); others need a binding made in SteamVR.
 - `openvr_api.dll` (32-bit) from your SteamVR install.
 
 ## Installing
@@ -65,37 +70,55 @@ To remove the mod, delete `dxgi.dll` from the game folder.
 ### Motion controllers
 - **Arms on your hands** (Marine and Predator): each hand sits on its controller and the arms bend to reach it
   (two-bone IK). **The elbows follow the roll of your wrists** the way real ones do: palm down swings them out, palm
-  up brings them in, less so the closer your hand is to your body. The body position, torso turn and the elbow
-  model are adjustable per species, and the hand calibration (offset and rotation) is one set, mirrored for the left
-  hand.
+  up brings them in, less so the closer your hand is to your body. The body position, torso turn, each shoulder's
+  position and the elbow model are adjustable per species, and the hand calibration (offset and rotation) is one set,
+  mirrored for the left hand.
 - **The game's animations can play on top:** attacks, reloads and recoil move your hands from where the controllers
   hold them (on for the Predator; off by default for the Marine, whose gun it would sway).
-- **The Marine's gun is in your right hand, and shots leave the gun** along its barrel, independent of where you
-  look. Each weapon keeps its own grip and shot-line calibration; weapons are recognised automatically.
-- **The muzzle flash stays on the gun in your hand** (setting "Muzzle flash on the gun"), at the shot origin.
+- **The Marine's gun is in your hand, and shots leave the gun** along its barrel, independent of where you look. Each
+  weapon keeps its own grip and shot-line calibration; weapons are recognised automatically.
+- **The muzzle flash stays on the gun in your hand** (setting "Muzzle flash on the gun"), with its own offsets per
+  weapon.
 - **Laser sight** along the shot line, for calibrating (off by default; it shows through walls).
 - **Two-handed aiming** (Marine): grip with your off hand on the barrel and the gun points along the line between
   your hands.
-- **Left-handed mode** (setting "Left-handed", off by default; one setting for all species, new and untested): the
-  arms play each other's animations mirrored, the Marine's gun goes in your left hand, and the triggers and grips swap
-  so your left hand fires. The gun itself isn't mirrored, and the Predator's wrist blades may not fully swap sides.
+- **Holsters:** grip with your palm at a spot on your body (stomach, hips, chest, either shoulder) to press that
+  spot's button. The Marine's defaults pick weapons, and the weapon goes to the hand that grabbed it, as if left-handed
+  mode switched on or off (setting "Weapon goes to the hand that grabs it"). Each spot's position and button are in the
+  Holsters settings; the Predator and Alien spots start unassigned. "Show the grab zones" draws every spot and the
+  two-handed grab in the headset while you set them up.
+- **Left-handed mode** (setting "Left-handed", off by default; one setting for all species): the arms play each
+  other's animations mirrored, the Marine's whole upper body mirrors with them, its gun goes in your left hand, and the
+  triggers and grips swap so your left hand fires. The gun itself isn't mirrored.
 
 ### Controls (default bindings)
 
-The controllers act as an Xbox pad for the game; every action can be rebound in SteamVR. Default bindings exist for
-**Touch** and **Valve Index** controllers. Virtual Desktop's Index emulation of Touch controllers uses the Index
-column (physical X / Y are its left A / B). Other controllers need a binding made in SteamVR.
+The controllers act as an Xbox pad for the game; every action can be rebound in SteamVR. Touch covers Quest 2 / 3 / Pro
+and Rift. Virtual Desktop's Index emulation of Touch controllers uses the Index column (physical X / Y are its left
+A / B). The other controllers are in the second table; anything else needs a binding made in SteamVR.
 
 | Game (Xbox pad) | Touch | Index |
 |---|---|---|
 | Sticks, stick clicks | Sticks, stick clicks | Thumbsticks, stick clicks |
 | LT / RT | Triggers | Triggers |
-| LB / RB (the left grip on the Marine's gun barrel is the two-handed grab instead) | Grips | Squeeze the grips |
+| LB / RB (the off-hand grip on the Marine's gun barrel is the two-handed grab instead, and a grip in a holster spot presses that spot's button) | Grips | Squeeze the grips |
 | A / B | A / B | Right A / B |
 | X / Y | X / Y | Left A / B |
 | D-pad left / up / right / down | Double press X / Y / B / A | Double press left A / left B / right B / right A |
 | Back / Start | Double tap the left / right thumbrest | Double tap the left / right trackpad, or hold the left / right stick click (0.8 s) |
 | Recenter the view | Touch both thumbrests at once | Touch both trackpads at once |
+
+Triggers are LT / RT on every controller. Grips are LB / RB too, except on Steam Frame.
+
+| Game (Xbox pad) | Steam Frame | Pico, Vive Focus 3, Vive Cosmos, HP Reverb G2 | Windows MR | Vive wands |
+|---|---|---|---|---|
+| Sticks | Sticks | Sticks | Sticks | Trackpads (touch) |
+| Stick clicks | Stick clicks | Stick clicks | Stick clicks | Click the middle of the trackpads |
+| A / B / X / Y | A / B / X / Y | A / B / X / Y | Click the right trackpad south / east / west / north | Click the right trackpad south / east / west / north |
+| D-pad | D-pad | Double press A / B / X / Y as on Touch | Click the left trackpad | Click the left trackpad |
+| LB / RB | Bumpers | Grips | Grips | Grips |
+| Back / Start | View / Menu, or double tap the left / right thumbrest | Hold the left / right stick click (0.8 s) | Left / right menu button | Left / right menu button |
+| Recenter the view | Touch both thumbrests at once | Settings menu | Settings menu | Settings menu |
 
 Virtual Desktop's emulation doesn't report trackpad touches by default, so there Back / Start are on the held stick
 clicks and recenter is in the settings menu.
@@ -103,18 +126,22 @@ clicks and recenter is in the settings menu.
 ### Settings menu
 
 Open the SteamVR dashboard and pick the **AvP VR** tab. Every setting is there (nothing needs editing in the ini),
-grouped into View, HUD, Controls, Head look, Hands, Hand placement, Weapon and Aiming, and changes apply and save
-immediately. Settings are kept **per species**, switched automatically with the species you play, and the gun and
-shot values also **per weapon**; rows that don't apply to the species you're playing are hidden.
+grouped into View, HUD, Controls, Head look, Hands, Hand placement, Holsters, Weapon and Aiming, and changes apply and
+save immediately. The page scrolls with the buttons at the top, or your stick if SteamVR passes it on. Settings are kept
+**per species**, switched automatically with the species you play, and the gun and shot values also **per weapon**;
+rows that don't apply to the species you're playing are hidden.
 
 ## Known issues
 
-- **Index default bindings are new and untested on real Index controllers.** The hand calibration was tuned on Touch,
-  so Index users may need to adjust "Hand placement" and the gun offsets.
+- **Default bindings other than Touch are new and untested on real hardware.** The hand calibration was tuned on Touch,
+  so other controllers may need adjusting in "Hand placement" and the gun offsets.
 - **The Alien has no hands on the controllers yet**, and the Alien's and Predator's attacks are on buttons (grips,
   triggers), not your hand movements.
 - **As the Alien, some distant things shift slightly against your head movement** (for example the view through
   windows), while nearby walls and characters stay put. Being investigated.
+- **Blood splatter sometimes shows in the left eye only** (reported by Virtual Desktop users). Being investigated.
+- **The Marine's chest and stomach holsters** press D-pad right and down by default; what those select hasn't been
+  checked. A D-pad spot counts as a weapon grab even if the game selects nothing, so the hands can swap on an empty slot.
 - **Multiplayer** works a solo survival multiplayer gamemode, but hasn't been tested with a second player: what others see of your head-driven
   look and aim isn't verified.
 - Predator vision modes and zoom haven't been checked in VR.
@@ -123,7 +150,7 @@ shot values also **per weapon**; rows that don't apply to the species you're pla
 
 ## Planned
 
-- **Body holsters:** reach to a spot on your body and grip to draw or switch a weapon.
+- **Manual reloading:** reload the Marine's weapons with your hands.
 - **Physical gestures:** swing your hands to attack (the Predator's wrist blades, the Alien's claws, the Marine's
   melee).
 - The Alien's hands on the controllers.

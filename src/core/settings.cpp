@@ -43,6 +43,21 @@ struct Entry
 // "Debug: hide pass" choices: 0 = off, i = kHudPasses[i - 1], kHudPassCount + 1 = unlisted draws.
 const char* HidePassLabel(int i) { return i <= 0 ? "off" : HudPassLabel(i - 1); }
 
+// What a holster spot presses on the pad.
+struct HolsterAction
+{
+    const char* label;
+    unsigned mask;
+};
+constexpr HolsterAction kHolsterActions[] = {
+    {"nothing", 0},       {"D-pad up", 0x0001}, {"D-pad down", 0x0002}, {"D-pad left", 0x0004},
+    {"D-pad right", 0x0008}, {"A", 0x1000},     {"B", 0x2000},          {"X", 0x4000},
+    {"Y", 0x8000},        {"LB", 0x0100},       {"RB", 0x0200},         {"Left stick click", 0x0040},
+    {"Right stick click", 0x0080}, {"Back", 0x0020}, {"Start", 0x0010},
+};
+constexpr int kHolsterActionCount = static_cast<int>(sizeof(kHolsterActions) / sizeof(kHolsterActions[0]));
+const char* HolsterActionLabel(int i) { return kHolsterActions[i >= 0 && i < kHolsterActionCount ? i : 0].label; }
+
 // Order = display order; entries of a group must be contiguous.
 const Entry kEntries[] = {
     {"IpdScale", "View", "Eye distance (IPD) scale", Kind::Number, 1.0f, 0.5f, 2.0f, 0.02f, 2, "x", nullptr},
@@ -84,6 +99,14 @@ const Entry kEntries[] = {
     {"BodyUp", "Hands", "Body (shoulders) up", Kind::Number, -0.13f, -0.5f, 0.5f, 0.01f, 2, "m", nullptr},
     {"StomachTurn", "Hands", "Torso turn from the stomach (+ right)", Kind::Number, -15.0f, -90.0f, 90.0f, 1.0f, 0,
      "deg", nullptr},
+    {"LeftShoulderOutward", "Hands", "Left shoulder outward", Kind::Number, 0.0f, -50.0f, 50.0f, 0.5f, 1, "cm", nullptr},
+    {"LeftShoulderUp", "Hands", "Left shoulder up", Kind::Number, 0.0f, -50.0f, 50.0f, 0.5f, 1, "cm", nullptr},
+    {"LeftShoulderForward", "Hands", "Left shoulder forward", Kind::Number, 0.0f, -50.0f, 50.0f, 0.5f, 1, "cm", nullptr},
+    {"RightShoulderOutward", "Hands", "Right shoulder outward", Kind::Number, 0.0f, -50.0f, 50.0f, 0.5f, 1, "cm",
+     nullptr},
+    {"RightShoulderUp", "Hands", "Right shoulder up", Kind::Number, 0.0f, -50.0f, 50.0f, 0.5f, 1, "cm", nullptr},
+    {"RightShoulderForward", "Hands", "Right shoulder forward", Kind::Number, 0.0f, -50.0f, 50.0f, 0.5f, 1, "cm",
+     nullptr},
     {"ElbowSwivel", "Hands", "Elbow swivel (+ lowers the elbows)", Kind::Number, 50.0f, -90.0f, 90.0f, 1.0f, 0, "deg",
      nullptr},
     {"ElbowRollModel", "Hands", "Elbows follow the wrist's roll (natural model)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
@@ -122,6 +145,10 @@ const Entry kEntries[] = {
     {"ShotsFromGun", "Aiming", "Shots from the gun (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"LaserSight", "Aiming", "Laser along the shots", Kind::Toggle, 0.0f, 0, 0, 0, 0, "", nullptr},
     {"MuzzleFlashOnGun", "Aiming", "Muzzle flash on the gun (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
+    {"MuzzleFlashRight", "Aiming", "Muzzle flash right of the shot origin", Kind::Number, 0.0f, -30.0f, 30.0f, 0.1f, 1,
+     "cm", nullptr},
+    {"MuzzleFlashUp", "Aiming", "Muzzle flash up", Kind::Number, 0.0f, -30.0f, 30.0f, 0.1f, 1, "cm", nullptr},
+    {"MuzzleFlashForward", "Aiming", "Muzzle flash forward", Kind::Number, 0.0f, -30.0f, 60.0f, 0.1f, 1, "cm", nullptr},
     {"ShotOriginRight", "Aiming", "Shot origin right", Kind::Number, -0.7f, -30.0f, 30.0f, 0.1f, 1, "cm", nullptr},
     {"ShotOriginUp", "Aiming", "Shot origin up", Kind::Number, 11.0f, -30.0f, 30.0f, 0.1f, 1, "cm", nullptr},
     {"ShotOriginForward", "Aiming", "Shot origin forward", Kind::Number, 12.0f, -30.0f, 60.0f, 0.1f, 1, "cm", nullptr},
@@ -135,6 +162,48 @@ const Entry kEntries[] = {
     {"HandYaw", "Hand placement", "Hand yaw (+ outward)", Kind::Number, 0.0f, -180.0f, 180.0f, 1.0f, 0, "deg", nullptr},
     {"HandRoll", "Hand placement", "Hand roll (+ outward)", Kind::Number, 0.0f, -180.0f, 180.0f, 1.0f, 0, "deg",
      nullptr},
+    {"Holsters", "Holsters", "Holsters (grip in a body spot)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
+    {"HolsterGrabHand", "Holsters", "Weapon goes to the hand that grabs it (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
+     nullptr},
+    {"HolsterHoldToKeep", "Holsters", "Hold the grip to keep it in that hand", Kind::Toggle, 0.0f, 0, 0, 0, 0, "",
+     nullptr},
+    {"ShowGrabZones", "Holsters", "Show the grab zones (for setting them up)", Kind::Toggle, 0.0f, 0, 0, 0, 0, "",
+     nullptr},
+    {"HolsterRadiusCm", "Holsters", "Holster size", Kind::Number, 15.0f, 5.0f, 40.0f, 1.0f, 0, "cm", nullptr},
+    {"HolsterDropCm", "Holsters", "Holster height offset (+ lower)", Kind::Number, 0.0f, -40.0f, 40.0f, 1.0f, 0, "cm",
+     nullptr},
+    {"HolsterStomachRight", "Holsters", "Stomach: to each side", Kind::Number, 10.0f, 0.0f, 60.0f, 1.0f, 0, "cm", nullptr},
+    {"HolsterStomachUp", "Holsters", "Stomach: up from the head", Kind::Number, -55.0f, -120.0f, 30.0f, 1.0f, 0, "cm",
+     nullptr},
+    {"HolsterStomachForward", "Holsters", "Stomach: forward", Kind::Number, 12.0f, -50.0f, 60.0f, 1.0f, 0, "cm", nullptr},
+    {"HolsterHipRight", "Holsters", "Hip: to each side", Kind::Number, 22.0f, 0.0f, 60.0f, 1.0f, 0, "cm", nullptr},
+    {"HolsterHipUp", "Holsters", "Hip: up from the head", Kind::Number, -78.0f, -120.0f, 30.0f, 1.0f, 0, "cm", nullptr},
+    {"HolsterHipForward", "Holsters", "Hip: forward", Kind::Number, 0.0f, -50.0f, 60.0f, 1.0f, 0, "cm", nullptr},
+    {"HolsterChestRight", "Holsters", "Chest: right", Kind::Number, 0.0f, -60.0f, 60.0f, 1.0f, 0, "cm", nullptr},
+    {"HolsterChestUp", "Holsters", "Chest: up from the head", Kind::Number, -33.0f, -120.0f, 30.0f, 1.0f, 0, "cm", nullptr},
+    {"HolsterChestForward", "Holsters", "Chest: forward", Kind::Number, 14.0f, -50.0f, 60.0f, 1.0f, 0, "cm", nullptr},
+    {"HolsterLeftShoulderRight", "Holsters", "Left shoulder: right", Kind::Number, -20.0f, -60.0f, 60.0f, 1.0f, 0, "cm",
+     nullptr},
+    {"HolsterLeftShoulderUp", "Holsters", "Left shoulder: up from the head", Kind::Number, -10.0f, -120.0f, 30.0f, 1.0f, 0,
+     "cm", nullptr},
+    {"HolsterLeftShoulderForward", "Holsters", "Left shoulder: forward", Kind::Number, -10.0f, -50.0f, 60.0f, 1.0f, 0,
+     "cm", nullptr},
+    {"HolsterRightShoulderRight", "Holsters", "Right shoulder: right", Kind::Number, 20.0f, -60.0f, 60.0f, 1.0f, 0, "cm",
+     nullptr},
+    {"HolsterRightShoulderUp", "Holsters", "Right shoulder: up from the head", Kind::Number, -10.0f, -120.0f, 30.0f, 1.0f,
+     0, "cm", nullptr},
+    {"HolsterRightShoulderForward", "Holsters", "Right shoulder: forward", Kind::Number, -10.0f, -50.0f, 60.0f, 1.0f, 0,
+     "cm", nullptr},
+    {"HolsterStomachAction", "Holsters", "Stomach presses", Kind::Choice, 2.0f, 0.0f,
+     static_cast<float>(kHolsterActionCount - 1), 1.0f, 0, "", &HolsterActionLabel},
+    {"HolsterHipAction", "Holsters", "Hip presses", Kind::Choice, 1.0f, 0.0f, static_cast<float>(kHolsterActionCount - 1),
+     1.0f, 0, "", &HolsterActionLabel},
+    {"HolsterChestAction", "Holsters", "Chest presses", Kind::Choice, 4.0f, 0.0f,
+     static_cast<float>(kHolsterActionCount - 1), 1.0f, 0, "", &HolsterActionLabel},
+    {"HolsterLeftShoulderAction", "Holsters", "Left shoulder presses", Kind::Choice, 3.0f, 0.0f,
+     static_cast<float>(kHolsterActionCount - 1), 1.0f, 0, "", &HolsterActionLabel},
+    {"HolsterRightShoulderAction", "Holsters", "Right shoulder presses", Kind::Choice, 3.0f, 0.0f,
+     static_cast<float>(kHolsterActionCount - 1), 1.0f, 0, "", &HolsterActionLabel},
     {"HideBodyBonesFirst", "Debug", "Hide body bones from #", Kind::Number, 0.0f, 0.0f, 128.0f, 1.0f, 0, "", nullptr},
     {"HideBodyBonesLast", "Debug", "Hide body bones to #", Kind::Number, 0.0f, 0.0f, 128.0f, 1.0f, 0, "", nullptr},
     {"DebugMeshProbe", "Debug", "Mesh probe (log the body pass's draws)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
@@ -176,6 +245,12 @@ enum Index
     kBodyForward,
     kBodyUp,
     kStomachTurn,
+    kLeftShoulderOutward,
+    kLeftShoulderUp,
+    kLeftShoulderForward,
+    kRightShoulderOutward,
+    kRightShoulderUp,
+    kRightShoulderForward,
     kElbowSwivel,
     kElbowRollModel,
     kElbowFollowRoll,
@@ -202,6 +277,9 @@ enum Index
     kShotsFromGun,
     kLaserSight,
     kMuzzleFlashOnGun,
+    kMuzzleFlashRight,
+    kMuzzleFlashUp,
+    kMuzzleFlashForward,
     kShotOriginRight,
     kShotOriginUp,
     kShotOriginForward,
@@ -213,6 +291,15 @@ enum Index
     kHandPitch,
     kHandYaw,
     kHandRoll,
+    kHolsters,
+    kHolsterGrabHand,
+    kHolsterHoldToKeep,
+    kShowGrabZones,
+    kHolsterRadiusCm,
+    kHolsterDropCm,
+    kHolsterPosFirst, // three each (right, up, forward), in settings::kHolster* order
+    kHolsterActionFirst = kHolsterPosFirst + 3 * kHolsterZoneCount,
+    kHolsterActionLast = kHolsterActionFirst + kHolsterZoneCount - 1,
     kHideBodyBonesFirst,
     kHideBodyBonesLast,
     kDebugMeshProbe,
@@ -247,7 +334,8 @@ struct ProfileSet
 ProfileSet g_weaponSet{"Weapon", "CurrentWeapon",
                        {kGunOffsetRight, kGunOffsetUp, kGunOffsetForward, kGunPitch, kGunYaw, kGunRoll,
                         kShotOriginRight, kShotOriginUp, kShotOriginForward, kShotPitch, kShotYaw, kTwoHandedAim,
-                        kTwoHandGrabRadius, kTwoHandReach, kSecondaryGripRight, kSecondaryGripUp},
+                        kTwoHandGrabRadius, kTwoHandReach, kSecondaryGripRight, kSecondaryGripUp, kMuzzleFlashRight,
+                        kMuzzleFlashUp, kMuzzleFlashForward},
                        {}, "", "no weapon seen yet", false};
 // Every other setting is per species (InitSets): all but the Info rows, the Debug group and the weapon set's.
 ProfileSet g_speciesSet{"Species", "CurrentSpecies", {}, {}, "", "no species seen yet", false};
@@ -287,6 +375,12 @@ constexpr ProfileDefault kSpeciesDefaults[] = {
     {"Alien", kLookOffsetUp, 0.0f},           {"Alien", kBodyForward, 0.13f},
     {"Alien", kBodyUp, -0.03f},               {"Alien", kStomachTurn, 0.0f},
     {"Alien", kElbowSwivel, 0.0f},
+    // The Marine's holsters pick weapons with the D-pad (the entries' defaults); the others' D-pads do something else.
+    {"Predator", kHolsterActionFirst + 0, 0.0f}, {"Predator", kHolsterActionFirst + 1, 0.0f},
+    {"Predator", kHolsterActionFirst + 2, 0.0f}, {"Predator", kHolsterActionFirst + 3, 0.0f},
+    {"Predator", kHolsterActionFirst + 4, 0.0f}, {"Alien", kHolsterActionFirst + 0, 0.0f},
+    {"Alien", kHolsterActionFirst + 1, 0.0f},    {"Alien", kHolsterActionFirst + 2, 0.0f},
+    {"Alien", kHolsterActionFirst + 3, 0.0f},    {"Alien", kHolsterActionFirst + 4, 0.0f},
 };
 constexpr ProfileDefault kWeaponDefaults[] = {
     {"m10_2305_197", kShotOriginRight, -0.6f},
@@ -357,7 +451,8 @@ void InitSets()
         bool weapon = false;
         for (int w : g_weaponSet.slots)
             weapon = weapon || w == i;
-        if (!weapon && i != kLeftHanded && kEntries[i].kind != Kind::Info && std::strcmp(kEntries[i].group, "Debug") != 0)
+        if (!weapon && i != kLeftHanded && i != kHolsters && i != kHolsterGrabHand && i != kHolsterHoldToKeep &&
+            i != kShowGrabZones && kEntries[i].kind != Kind::Info && std::strcmp(kEntries[i].group, "Debug") != 0)
             g_speciesSet.slots.push_back(i);
     }
 }
@@ -588,7 +683,14 @@ void Load()
         for (Profile& p : s->profiles)
             for (size_t j = 0; j < s->slots.size(); ++j)
                 if (std::isnan(p.v[j]))
+                {
                     p.v[j] = g_values[s->slots[j]].load(std::memory_order_relaxed);
+                    // A setting newer than the file: the class's own default, if it has one.
+                    if (s == &g_speciesSet)
+                        for (const ProfileDefault& d : kSpeciesDefaults)
+                            if (d.index == s->slots[j] && p.key == d.key)
+                                p.v[j] = d.value;
+                }
     AVP_LOG(kLog, "%s: %d of %d values read%s", FilePath().c_str(), loaded, kCount,
             content.empty() ? " (no file: defaults)" : "");
     for (int i = 0; i < kCount; ++i)
@@ -630,6 +732,28 @@ bool ShotsFromGun() { return g_values[kShotsFromGun].load(std::memory_order_rela
 bool LaserSight() { return g_values[kLaserSight].load(std::memory_order_relaxed) != 0.0f; }
 bool MuzzleFlashOnGun() { return g_values[kMuzzleFlashOnGun].load(std::memory_order_relaxed) != 0.0f; }
 bool LeftHanded() { return g_values[kLeftHanded].load(std::memory_order_relaxed) != 0.0f; }
+void ShoulderOffset(int hand, float off[3])
+{
+    const int first = hand ? kRightShoulderOutward : kLeftShoulderOutward;
+    for (int i = 0; i < 3; ++i)
+        off[i] = g_values[first + i].load(std::memory_order_relaxed) * 0.01f; // the settings are centimetres
+}
+bool Holsters() { return g_values[kHolsters].load(std::memory_order_relaxed) != 0.0f; }
+bool HolsterGrabHand() { return g_values[kHolsterGrabHand].load(std::memory_order_relaxed) != 0.0f; }
+bool HolsterHoldToKeep() { return g_values[kHolsterHoldToKeep].load(std::memory_order_relaxed) != 0.0f; }
+bool ShowGrabZones() { return g_values[kShowGrabZones].load(std::memory_order_relaxed) != 0.0f; }
+float HolsterRadius() { return g_values[kHolsterRadiusCm].load(std::memory_order_relaxed) * 0.01f; }
+float HolsterDrop() { return g_values[kHolsterDropCm].load(std::memory_order_relaxed) * 0.01f; }
+void HolsterOffset(int zone, float off[3])
+{
+    for (int i = 0; i < 3; ++i)
+        off[i] = g_values[kHolsterPosFirst + zone * 3 + i].load(std::memory_order_relaxed) * 0.01f;
+}
+unsigned HolsterActionMask(int zone)
+{
+    const int i = static_cast<int>(g_values[kHolsterActionFirst + zone].load(std::memory_order_relaxed));
+    return kHolsterActions[i >= 0 && i < kHolsterActionCount ? i : 0].mask;
+}
 bool TwoHandedAim() { return g_values[kTwoHandedAim].load(std::memory_order_relaxed) != 0.0f; }
 void TwoHandParams(float* grabRadius, float* reach, float grip[2])
 {
@@ -645,6 +769,11 @@ void ShotOffset(float off[3], float angles[2])
         off[i] = g_values[kShotOriginRight + i].load(std::memory_order_relaxed) * 0.01f; // the settings are centimetres
     angles[0] = g_values[kShotPitch].load(std::memory_order_relaxed);
     angles[1] = g_values[kShotYaw].load(std::memory_order_relaxed);
+}
+void MuzzleFlashOffset(float off[3])
+{
+    for (int i = 0; i < 3; ++i)
+        off[i] = g_values[kMuzzleFlashRight + i].load(std::memory_order_relaxed) * 0.01f; // the settings are centimetres
 }
 // Six consecutive values (right, up, forward, pitch, yaw, roll) from index first.
 void SixFrom(int first, float off[3], float angles[3])

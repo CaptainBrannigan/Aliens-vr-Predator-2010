@@ -44,6 +44,9 @@ bool HeadAnglesDeg(float out[3]);
 // (3x3 row-major, columns = right, up, forward). False before the first valid pose / recenter.
 bool HeadRotation(float m[9]);
 
+// Main thread: the head in tracking space (metres, Y up), its position and forward. False without a pose.
+bool HeadPose(float pos[3], float forward[3]);
+
 // The engine's rotation for (pitch, yaw, roll) radians, its own conventions (+ pitch = up, + yaw = right):
 // 3x3 row-major, columns = right, up, forward.
 void EngineEulerMatrix(const float angles[3], float m[9]);
