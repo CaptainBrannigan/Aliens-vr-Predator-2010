@@ -39,6 +39,13 @@ the heap, everything else inside system DLLs (d3d11, dxgi, xinput1_3, binkw32) o
 
 ## Version history
 
+**1.5 (2026-11-01)**
+- The Marine's flashlight on a chosen mount (the game's spot, head, chest, either hand, weapon) with offsets: its
+  attachment node is pinned like the muzzle effects.
+- Custom binding files: `avpvr_custom_bindings_<type>.json` next to the DLL replaces that controller's default, for when
+  SteamVR's binding UI can't edit it.
+- Built-in defaults = the author's current values, per class and per weapon (flash offsets, holster heights, HUD).
+
 **1.4 (2026-11-01)**
 - Left-handed mode: the arms take each other's animation, mirrored about the view; the Marine's whole upper body
   mirrors, the Predator's arms keep their shoulders on its chest. The gun moves to the left controller, unmirrored;

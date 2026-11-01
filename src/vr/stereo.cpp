@@ -776,6 +776,14 @@ bool HeadPose(float pos[3], float forward[3])
     return true;
 }
 
+bool HeadPoseMatrix(float m[3][4])
+{
+    if (!g_head.valid)
+        return false;
+    std::memcpy(m, g_head.m, sizeof(float) * 12);
+    return true;
+}
+
 unsigned RecenterCount() { return g_recenterCount; }
 
 bool HandToWorld(const float pose[3][4], float rot[9], float pos[3])

@@ -46,6 +46,12 @@ bool MuzzleFlashOnGun(); // Marine: the muzzle effects stay at the shots' origin
 // The flash from the shot origin, per weapon: off = right, up, forward in the gun's frame (metres; the settings are cm).
 void MuzzleFlashOffset(float off[3]);
 bool LeftHanded(); // the arms' animation mirrored, the gun on the left controller, triggers and grips swapped
+// The Marine's flashlight (vr/shots.h): where it sits, and its offset there: right, up, forward (metres; the settings
+// are cm). With the weapon, from the muzzle flash.
+constexpr int kFlashlightGame = 0, kFlashlightHead = 1, kFlashlightChest = 2, kFlashlightRightHand = 3,
+              kFlashlightLeftHand = 4, kFlashlightWeapon = 5;
+int FlashlightMount();
+void FlashlightOffset(float off[3]);
 // A shoulder's move for the arm IK (hand 0 left, 1 right): off = outward, up, forward (metres; the settings are cm).
 void ShoulderOffset(int hand, float off[3]);
 // Holsters (vr/holsters.h). Zones in setting order; offsets = right, up, forward from the head (metres). Stomach and hip

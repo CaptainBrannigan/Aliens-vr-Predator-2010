@@ -16,6 +16,9 @@
 // buffer only. With MuzzleFlashOnGun on, every effect node on the muzzle socket is pinned to the shots' origin plus the
 // per-weapon muzzle flash offsets each frame, through the flags that stop the game writing the node. Data writes only.
 //
+// The flashlight is pinned the same way: its attachment node goes to the FlashlightMount setting's spot plus the
+// offsets, shining along that spot's forward. No socket needed: the node just takes a transform.
+//
 // Log: avpvr_shots.log.
 
 namespace avp::shots {

@@ -5,7 +5,7 @@ This mod is a proxy `dxgi.dll` that hooks the game's rendering and input and tal
 the game: stereo 3D for all three species, head-tracked look and movement, the Marine's gun and the arms of the
 Marine and the Predator on your motion controllers, and an in-headset settings menu.
 
-**Status: 1.4, a hobby reverse-engineering project.** See [Known issues](#known-issues) and [Planned](#planned) for
+**Status: 1.5, a hobby reverse-engineering project.** See [Known issues](#known-issues) and [Planned](#planned) for
 what isn't done yet.
 
 > **SteamVR is the only runtime targeted.** The mod talks to SteamVR through its `openvr_api.dll` and nothing else: it
@@ -43,6 +43,11 @@ it the game shows on the monitor as usual.
 saved your own binding for the game, SteamVR keeps using that copy and won't pick up new actions from a newer
 version of the mod until you switch back to the defaults (or add the new actions to your copy).
 
+**Editing bindings by hand:** if SteamVR won't let you edit a binding, copy your controller's `avpvr_bindings_<type>.json`
+from the game folder to `avpvr_custom_bindings_<type>.json` in the same folder, change the copy, and restart the game. The
+default files are rewritten every launch, so edit only the copy. Your controller's type is in `avpvr_input.log`, and
+deleting the copy goes back to the defaults.
+
 To remove the mod, delete `dxgi.dll` from the game folder.
 
 ## Features
@@ -79,6 +84,8 @@ To remove the mod, delete `dxgi.dll` from the game folder.
   weapon keeps its own grip and shot-line calibration; weapons are recognised automatically.
 - **The muzzle flash stays on the gun in your hand** (setting "Muzzle flash on the gun"), with its own offsets per
   weapon.
+- **The Marine's flashlight can go where you want** (setting "Flashlight on"): the game's own spot, your head, chest,
+  either hand, or the weapon (from the muzzle flash, along the shots), with its own offsets.
 - **Laser sight** along the shot line, for calibrating (off by default; it shows through walls).
 - **Two-handed aiming** (Marine): grip with your off hand on the barrel and the gun points along the line between
   your hands.
@@ -126,7 +133,7 @@ clicks and recenter is in the settings menu.
 ### Settings menu
 
 Open the SteamVR dashboard and pick the **AvP VR** tab. Every setting is there (nothing needs editing in the ini),
-grouped into View, HUD, Controls, Head look, Hands, Hand placement, Holsters, Weapon and Aiming, and changes apply and
+grouped into View, HUD, Controls, Head look, Hands, Hand placement, Holsters, Weapon, Aiming and Flashlight, and changes apply and
 save immediately. The page scrolls with the buttons at the top, or your stick if SteamVR passes it on. Settings are kept
 **per species**, switched automatically with the species you play, and the gun and shot values also **per weapon**;
 rows that don't apply to the species you're playing are hidden.

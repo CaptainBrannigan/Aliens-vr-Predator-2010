@@ -46,6 +46,8 @@ bool HeadRotation(float m[9]);
 
 // Main thread: the head in tracking space (metres, Y up), its position and forward. False without a pose.
 bool HeadPose(float pos[3], float forward[3]);
+// The same as a 3x4, as a controller's pose (for HandToWorld).
+bool HeadPoseMatrix(float m[3][4]);
 
 // The engine's rotation for (pitch, yaw, roll) radians, its own conventions (+ pitch = up, + yaw = right):
 // 3x3 row-major, columns = right, up, forward.

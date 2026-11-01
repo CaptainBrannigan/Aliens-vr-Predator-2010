@@ -55,6 +55,17 @@ const ControllerProfile kControllers[] = {
 
 std::string BindingsFileName(const ControllerProfile& c) { return std::string("avpvr_bindings_") + c.type + ".json"; }
 
+// A player's own binding file next to the DLL, used instead of the default. The default files are rewritten every launch,
+// so hand edits need their own file (2026-11-01: a Steam Frame player couldn't edit or create a binding in SteamVR's UI).
+std::string CustomBindingsFileName(const ControllerProfile& c)
+{
+    return std::string("avpvr_custom_bindings_") + c.type + ".json";
+}
+bool HasCustomBindings(const ControllerProfile& c)
+{
+    return GetFileAttributesA((ModuleDirectory() + CustomBindingsFileName(c)).c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
 // PAD ACTIONS: the virtual pad's buttons, one SteamVR boolean action each. Names are permanent: SteamVR keeps a saved
 // copy of a player's edited bindings keyed by them (MOHW lesson: a renamed action is silently unbound there).
 struct PadAction
@@ -110,7 +121,7 @@ std::string BuildActionManifest()
   "default_bindings": [)";
     for (const ControllerProfile& c : kControllers)
         s += std::string(&c == kControllers ? "" : ",") + "\n    { \"controller_type\": \"" + c.type +
-             "\", \"binding_url\": \"" + BindingsFileName(c) + "\" }";
+             "\", \"binding_url\": \"" + (HasCustomBindings(c) ? CustomBindingsFileName(c) : BindingsFileName(c)) + "\" }";
     s += R"(
   ],
   "actions": [
@@ -483,6 +494,9 @@ void Init(::vr::IVRInput* input, ::vr::IVRSystem* system, int trackingUniverse)
         AVP_LOG(kLog, "FAILED to write the action manifest / bindings next to the DLL (%s)", manifestPath.c_str());
         return;
     }
+    for (const ControllerProfile& c : kControllers)
+        if (HasCustomBindings(c))
+            AVP_LOG(kLog, "custom bindings for %s: %s", c.type, CustomBindingsFileName(c).c_str());
     // IPCError = our end timed out while vrserver was busy (MOHW, live: it had taken the manifest anyway). Retry, and
     // on a timeout carry on to the handle lookups.
     ::vr::EVRInputError err = ::vr::VRInputError_None;

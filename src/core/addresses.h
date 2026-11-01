@@ -131,6 +131,13 @@ constexpr uint32_t  kNodeFixedRot       = 0x08;  // the game leaves the quaterni
 constexpr uint32_t  kNodeFixedPos       = 0x10;  // the same for the position
 constexpr uintptr_t kNodeChildModelSlot = 0x24;  // vtable: thiscall returning the node's model, if it holds one
 
+// ---- The Marine's flashlight (static, 2026-11-01; FINDINGS section 13) ----
+// "Torch", weapon type 14 (ctor 007A73B0, vtable 00935500). Its update (+0x64, 007A7CE0) turns the light to the
+// character's look each tick. The light is an attachment node (0x98 bytes, 007A7830) at [torch+0x9C]+4, on the same
+// model as the weapon effects, at the socket whose hash is in g_TorchSocketHash.
+constexpr uintptr_t vt_LightAttachment  = 0x008C40C8;
+constexpr uintptr_t g_TorchSocketHash   = 0x009227DC;
+
 // ---- Screen warp effect (2026-10-18; FINDINGS section 13) ----
 // A full-screen displacement: the scene re-sampled through a displacement texture (PS blob 0094A390, created by
 // 0081FE70 into 00A7222C, its g_fIntensity cbuffer 00A72230). Class vtable 00933578 (ctor 00798AF0): +0x04 = 0x7F,

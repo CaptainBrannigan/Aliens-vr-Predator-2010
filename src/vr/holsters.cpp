@@ -205,9 +205,10 @@ void Update()
         g_grabbedBy = -1;
     }
     float headPos[3], headForward[3];
-    const bool active = settings::Holsters() && stereo::StereoActive() && stereo::HeadPose(headPos, headForward);
-    if (active)
-        UpdateBody(headForward);
+    const bool haveHead = stereo::StereoActive() && stereo::HeadPose(headPos, headForward);
+    const bool active = settings::Holsters() && haveHead;
+    if (haveHead)
+        UpdateBody(headForward); // holsters off too: the flashlight's chest mount
     const bool holdToKeep = settings::HolsterHoldToKeep();
     static int missLogs = 0;
     for (int h = 0; h < 2; ++h)
@@ -280,6 +281,26 @@ void Update()
     g_suppress.store(suppress, std::memory_order_relaxed);
     if (settings::ShowGrabZones() && stereo::StereoActive() && stereo::HeadPose(headPos, headForward))
         PublishView(active && g_haveBody, headPos);
+}
+
+bool ChestPose(float m[3][4])
+{
+    float head[3], forward[3], c[3];
+    if (!g_haveBody || !stereo::HeadPose(head, forward))
+        return false;
+    for (const Zone& z : kZones)
+        if (z.zone == settings::kHolsterChest)
+            ZoneCentre(z, head, c);
+    const float f[3] = {g_bodyForward[0], 0.0f, g_bodyForward[1]};
+    const float right[3] = {-f[2], 0.0f, f[0]}; // forward x up
+    for (int i = 0; i < 3; ++i)
+    {
+        m[i][0] = right[i];
+        m[i][1] = i == 1 ? 1.0f : 0.0f;
+        m[i][2] = -f[i]; // a pose looks along its -z
+        m[i][3] = c[i];
+    }
+    return true;
 }
 
 bool LeftHandedNow()

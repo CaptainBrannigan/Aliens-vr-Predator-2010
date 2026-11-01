@@ -513,6 +513,13 @@ deg. Two-handed aim (MOHW port): the left grip held with the left palm within 15
 it) turns the gun frame (`PlacedGunWorld`) to aim at the palm, keeping the right hand's up. Open: the second fire
 path, projectile weapons, the Smartgun's targeting.
 
+**The Marine's flashlight (static, 2026-11-01):** "Torch", weapon type 14 (factory `0079E340`, ctor `007A73B0`, vtable
+`00935500`). Update = slot +0x64 (`00935500+0x64 = 00935564`, `007A7CE0`): in state 6 it takes the character's look
+(+0xB0) and `007A7370` -> `004DA5A0` writes it as the node's rotation (flag 8). `torch+0x9C` = a 0x20 record whose +4
+is the light, an attachment node (vtable `008C40C8`, ctor `004DE290`, created by `007A7830`) on `[char+0x24]+0x98` at
+socket hash `[009227DC]` (`06233516`). `AVP.MarinePlayer.TorchActive` isn't its state: `006CF870` sets it from the
+cutscene flag. `src/vr/shots.*` pins the node like the muzzle effects.
+
 **Raycast (static, unused yet):** `0051B900` = ray init, thiscall(ray; origin*, dir*, ignore entity handle, length
 (float)), RET 0x10 (sets `[9]` ignore, `[10]` length, `[11]` 0, `[12]` 8, `[13]` -1); `0080CBD0(ray, 8, 00920EB8, 0,
 0)` cdecl casts it and returns the static result `00A71D40` whose first float is the hit distance. SetLookDirection

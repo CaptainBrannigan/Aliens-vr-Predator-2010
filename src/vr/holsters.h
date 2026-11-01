@@ -12,6 +12,10 @@ namespace avp::holsters {
 // Once per frame, main thread (fp::OnPresent), after the two-handed aim decided.
 void Update();
 
+// The chest spot as a 3x4 pose (tracking space, as a controller's; facing the body's forward). False before the body
+// frame has a heading.
+bool ChestPose(float m[3][4]);
+
 // The hand holding the weapon now: the left-handed setting, or the hand that last grabbed a weapon. Any thread.
 bool LeftHandedNow();
 

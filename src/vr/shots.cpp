@@ -1,8 +1,10 @@
 #include "shots.h"
 
 #include "head_aim.h"
+#include "holsters.h"
 #include "laser.h"
 #include "stereo.h"
+#include "vr_input.h"
 #include "../core/addresses.h"
 #include "../core/log.h"
 #include "../core/settings.h"
@@ -95,8 +97,12 @@ struct SeenNode
 
 struct FlashWalk
 {
+    bool flash;   // pin the muzzle effects at pos, quat
     float pos[3], quat[4];
-    int budget, moved, seen;
+    bool light;   // pin the flashlight at lightPos, lightQuat
+    bool release; // hand the flashlight's position back to the game
+    float lightPos[3], lightQuat[4];
+    int budget, moved, lit, seen;
     SeenNode node[kMaxSeen];
 };
 
@@ -158,6 +164,20 @@ void WalkModel(uintptr_t model, int depth, FlashWalk& w)
         const uint32_t hash = NodeSocketHash(model, node);
         if (w.seen < kMaxSeen)
             w.node[w.seen++] = {static_cast<uint32_t>(vtable), hash, depth};
+        if (vtable == addr::vt_LightAttachment && hash != 0 && hash == Global<uint32_t>(addr::g_TorchSocketHash))
+        {
+            auto& flags = *reinterpret_cast<uint32_t*>(node + addr::kNodeFlags);
+            if (w.light)
+            {
+                flags |= addr::kNodeFixedPos | addr::kNodeFixedRot;
+                std::memcpy(reinterpret_cast<void*>(node + addr::kNodePos), w.lightPos, sizeof(w.lightPos));
+                std::memcpy(reinterpret_cast<void*>(node + addr::kNodeQuat), w.lightQuat, sizeof(w.lightQuat));
+            }
+            else if (w.release)
+                flags &= ~addr::kNodeFixedPos; // the rotation's flag is the game's own (it sets it each tick)
+            ++w.lit;
+            continue;
+        }
         if (vtable != addr::vt_EffectAttachment)
         {
             const auto child = reinterpret_cast<PFN_ChildModel>(Read<uintptr_t>(vtable + addr::kNodeChildModelSlot))(node);
@@ -165,6 +185,8 @@ void WalkModel(uintptr_t model, int depth, FlashWalk& w)
                 WalkModel(child, depth + 1, w);
             continue;
         }
+        if (!w.flash)
+            continue;
         bool muzzle = false;
         for (int i = 0; i < g_muzzleHashes; ++i)
             muzzle = muzzle || (hash != 0 && hash == g_muzzleHash[i]);
@@ -227,6 +249,27 @@ void DirectionToQuat(const float d[3], float q[4])
         const float s = std::sqrt(1.0f + m[8] - m[0] - m[4]) * 2.0f;
         q[0] = (m[2] + m[6]) / s, q[1] = (m[5] + m[7]) / s, q[2] = s * 0.25f, q[3] = (m[3] - m[1]) / s;
     }
+}
+
+// The flashlight's mount, world: its point and axes (right, down, forward). False when that mount has no pose yet.
+bool FlashlightMountPose(int mount, float pos[3], float axis[3][3])
+{
+    float pose[3][4], rot[9];
+    bool have = false;
+    if (mount == settings::kFlashlightHead)
+        have = stereo::HeadPoseMatrix(pose);
+    else if (mount == settings::kFlashlightChest)
+        have = holsters::ChestPose(pose);
+    else if (mount == settings::kFlashlightRightHand)
+        have = input::GetHandPose(1, false, pose);
+    else if (mount == settings::kFlashlightLeftHand)
+        have = input::GetHandPose(0, false, pose);
+    if (!have || !stereo::HandToWorld(pose, rot, pos))
+        return false;
+    for (int a = 0; a < 3; ++a)
+        for (int j = 0; j < 3; ++j)
+            axis[a][j] = rot[j * 3 + a];
+    return true;
 }
 
 // The fire transform, moved onto the gun on the controller (see shots.h). pos[3], dir[3]; mat = the muzzle's 3x3
@@ -310,7 +353,7 @@ void OnLook(void* character, const float look[3])
         visible = stereo::WorldToTracking(start, ts, head) && stereo::WorldToTracking(end, te);
     }
     laser::Update(visible, ts, te, head);
-    if (settings::MuzzleFlashOnGun() && settings::ShotsFromGun() && g_muzzleHashes > 0 && IsLocalMarine(character))
+    if (IsLocalMarine(character))
     {
         g_flashCharacter = character;
         std::memcpy(g_flashLook, look, sizeof(g_flashLook));
@@ -325,14 +368,52 @@ void OnCameraApply()
         return;
     FlashWalk w{};
     float dir[3], axis[3][3], off[3];
-    if (!GunRay(g_flashLook, w.pos, dir, nullptr, axis))
+    const bool gun = GunRay(g_flashLook, w.pos, dir, nullptr, axis);
+    if (gun)
+    {
+        settings::MuzzleFlashOffset(off);
+        for (int j = 0; j < 3; ++j)
+            w.pos[j] += off[0] * axis[0][j] - off[1] * axis[1][j] + off[2] * axis[2][j];
+        DirectionToQuat(dir, w.quat);
+    }
+    w.flash = gun && settings::MuzzleFlashOnGun() && settings::ShotsFromGun() && g_muzzleHashes > 0;
+
+    // The flashlight: the mount's point plus the offset in its axes, shining along its forward. The weapon's point is
+    // the muzzle flash's, whatever the flash's own setting.
+    static bool lightPinned = false;
+    const int mount = settings::FlashlightMount();
+    if (mount == settings::kFlashlightWeapon)
+    {
+        w.light = gun;
+        std::memcpy(w.lightPos, w.pos, sizeof(w.lightPos));
+    }
+    else if (mount != settings::kFlashlightGame)
+        w.light = FlashlightMountPose(mount, w.lightPos, axis);
+    if (w.light)
+    {
+        settings::FlashlightOffset(off);
+        for (int j = 0; j < 3; ++j)
+            w.lightPos[j] += off[0] * axis[0][j] - off[1] * axis[1][j] + off[2] * axis[2][j];
+        const float forward[3] = {axis[2][0], axis[2][1], axis[2][2]};
+        DirectionToQuat(mount == settings::kFlashlightWeapon ? dir : forward, w.lightQuat); // on the gun: along the shots
+        lightPinned = true;
+    }
+    else if (mount == settings::kFlashlightGame && lightPinned)
+    {
+        w.release = true;
+        lightPinned = false;
+    }
+    if (!w.flash && !w.light && !w.release)
         return;
-    settings::MuzzleFlashOffset(off);
-    for (int j = 0; j < 3; ++j)
-        w.pos[j] += off[0] * axis[0][j] - off[1] * axis[1][j] + off[2] * axis[2][j];
-    DirectionToQuat(dir, w.quat);
     w.budget = kMaxNodes;
     const bool walked = WalkCharacter(character, w);
+    static int lastLit = -1;
+    if (w.lit != lastLit)
+    {
+        AVP_LOG(kLog, "flashlight: %d light node(s) on its socket, mount %d, at (%.2f %.2f %.2f)", w.lit, mount,
+                w.lightPos[0], w.lightPos[1], w.lightPos[2]);
+        lastLit = w.lit;
+    }
     if (g_flashLogFrames <= 0)
         return;
     --g_flashLogFrames;

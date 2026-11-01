@@ -58,6 +58,11 @@ constexpr HolsterAction kHolsterActions[] = {
 constexpr int kHolsterActionCount = static_cast<int>(sizeof(kHolsterActions) / sizeof(kHolsterActions[0]));
 const char* HolsterActionLabel(int i) { return kHolsterActions[i >= 0 && i < kHolsterActionCount ? i : 0].label; }
 
+// Where the flashlight sits; the order is the setting's values (settings.h kFlashlight*).
+constexpr const char* kFlashlightMounts[] = {"The game's spot", "Head", "Chest", "Right hand", "Left hand", "Weapon"};
+constexpr int kFlashlightMountCount = static_cast<int>(sizeof(kFlashlightMounts) / sizeof(kFlashlightMounts[0]));
+const char* FlashlightMountLabel(int i) { return kFlashlightMounts[i >= 0 && i < kFlashlightMountCount ? i : 0]; }
+
 // Order = display order; entries of a group must be contiguous.
 const Entry kEntries[] = {
     {"IpdScale", "View", "Eye distance (IPD) scale", Kind::Number, 1.0f, 0.5f, 2.0f, 0.02f, 2, "x", nullptr},
@@ -65,7 +70,7 @@ const Entry kEntries[] = {
      nullptr},
     {"RollFromHeadOnly", "View", "Camera roll from your head only", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"HeadPosition", "View", "Head position (lean, crouch, step)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
-    {"RoomScaleStep", "View", "Room-scale: the character steps under your head", Kind::Toggle, 1.0f, 0, 0, 0, 0, "",
+    {"RoomScaleStep", "View", "Room-scale: the character steps under your head", Kind::Toggle, 0.0f, 0, 0, 0, 0, "",
      nullptr},
     {"RoomScaleStepCm", "View", "Room-scale: step once your head is this far off", Kind::Number, 10.0f, 10.0f, 100.0f,
      1.0f, 0, "cm", nullptr},
@@ -76,8 +81,8 @@ const Entry kEntries[] = {
     {"ScreenWarp", "View", "Screen warp effects (the Alien's fisheye)", Kind::Toggle, 0.0f, 0, 0, 0, 0, "", nullptr},
     {"HudPanel", "HUD", "HUD in a panel (off = full view)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"HudWidthDeg", "HUD", "HUD size (width)", Kind::Number, 88.0f, 20.0f, 110.0f, 1.0f, 0, "deg", nullptr},
-    {"HudDistanceCm", "HUD", "HUD distance", Kind::Number, 50.0f, 1.0f, 2000.0f, 1.0f, 0, "cm", nullptr},
-    {"HudHeightDeg", "HUD", "HUD height (+ up)", Kind::Number, -20.0f, -30.0f, 30.0f, 0.5f, 1, "deg", nullptr},
+    {"HudDistanceCm", "HUD", "HUD distance", Kind::Number, 20.0f, 1.0f, 2000.0f, 1.0f, 0, "cm", nullptr},
+    {"HudHeightDeg", "HUD", "HUD height (+ up)", Kind::Number, -15.0f, -30.0f, 30.0f, 0.5f, 1, "deg", nullptr},
     {"HideDuplicateTracker", "HUD", "Hide the duplicate motion tracker", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"HideMarineReticle", "HUD", "Hide the reticle (Marine)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"TurnSpeedDeg", "Controls", "Turn speed (right stick)", Kind::Number, 150.0f, 30.0f, 360.0f, 5.0f, 0, "deg/s",
@@ -154,6 +159,13 @@ const Entry kEntries[] = {
     {"ShotOriginForward", "Aiming", "Shot origin forward", Kind::Number, 12.0f, -30.0f, 60.0f, 0.1f, 1, "cm", nullptr},
     {"ShotPitch", "Aiming", "Shot pitch (+ up)", Kind::Number, 3.5f, -30.0f, 30.0f, 0.25f, 2, "deg", nullptr},
     {"ShotYaw", "Aiming", "Shot yaw (+ right)", Kind::Number, -1.75f, -30.0f, 30.0f, 0.25f, 2, "deg", nullptr},
+    {"FlashlightMount", "Flashlight", "Flashlight on", Kind::Choice, static_cast<float>(kFlashlightGame), 0.0f,
+     static_cast<float>(kFlashlightMountCount - 1), 1.0f, 0, "", &FlashlightMountLabel},
+    {"FlashlightRight", "Flashlight", "Flashlight offset right", Kind::Number, 0.0f, -50.0f, 50.0f, 0.5f, 1, "cm",
+     nullptr},
+    {"FlashlightUp", "Flashlight", "Flashlight offset up", Kind::Number, 0.0f, -50.0f, 50.0f, 0.5f, 1, "cm", nullptr},
+    {"FlashlightForward", "Flashlight", "Flashlight offset forward", Kind::Number, 0.0f, -50.0f, 100.0f, 0.5f, 1, "cm",
+     nullptr},
     {"HandRight", "Hand placement", "Hand offset outward (right hand: right)", Kind::Number, 0.0f, -50.0f, 50.0f, 0.1f,
      1, "cm", nullptr},
     {"HandUp", "Hand placement", "Hand offset up", Kind::Number, -1.3f, -50.0f, 50.0f, 0.1f, 1, "cm", nullptr},
@@ -173,14 +185,14 @@ const Entry kEntries[] = {
     {"HolsterDropCm", "Holsters", "Holster height offset (+ lower)", Kind::Number, 0.0f, -40.0f, 40.0f, 1.0f, 0, "cm",
      nullptr},
     {"HolsterStomachRight", "Holsters", "Stomach: to each side", Kind::Number, 10.0f, 0.0f, 60.0f, 1.0f, 0, "cm", nullptr},
-    {"HolsterStomachUp", "Holsters", "Stomach: up from the head", Kind::Number, -55.0f, -120.0f, 30.0f, 1.0f, 0, "cm",
+    {"HolsterStomachUp", "Holsters", "Stomach: up from the head", Kind::Number, -45.0f, -120.0f, 30.0f, 1.0f, 0, "cm",
      nullptr},
     {"HolsterStomachForward", "Holsters", "Stomach: forward", Kind::Number, 12.0f, -50.0f, 60.0f, 1.0f, 0, "cm", nullptr},
     {"HolsterHipRight", "Holsters", "Hip: to each side", Kind::Number, 22.0f, 0.0f, 60.0f, 1.0f, 0, "cm", nullptr},
-    {"HolsterHipUp", "Holsters", "Hip: up from the head", Kind::Number, -78.0f, -120.0f, 30.0f, 1.0f, 0, "cm", nullptr},
+    {"HolsterHipUp", "Holsters", "Hip: up from the head", Kind::Number, -58.0f, -120.0f, 30.0f, 1.0f, 0, "cm", nullptr},
     {"HolsterHipForward", "Holsters", "Hip: forward", Kind::Number, 0.0f, -50.0f, 60.0f, 1.0f, 0, "cm", nullptr},
     {"HolsterChestRight", "Holsters", "Chest: right", Kind::Number, 0.0f, -60.0f, 60.0f, 1.0f, 0, "cm", nullptr},
-    {"HolsterChestUp", "Holsters", "Chest: up from the head", Kind::Number, -33.0f, -120.0f, 30.0f, 1.0f, 0, "cm", nullptr},
+    {"HolsterChestUp", "Holsters", "Chest: up from the head", Kind::Number, -23.0f, -120.0f, 30.0f, 1.0f, 0, "cm", nullptr},
     {"HolsterChestForward", "Holsters", "Chest: forward", Kind::Number, 14.0f, -50.0f, 60.0f, 1.0f, 0, "cm", nullptr},
     {"HolsterLeftShoulderRight", "Holsters", "Left shoulder: right", Kind::Number, -20.0f, -60.0f, 60.0f, 1.0f, 0, "cm",
      nullptr},
@@ -194,7 +206,7 @@ const Entry kEntries[] = {
      0, "cm", nullptr},
     {"HolsterRightShoulderForward", "Holsters", "Right shoulder: forward", Kind::Number, -10.0f, -50.0f, 60.0f, 1.0f, 0,
      "cm", nullptr},
-    {"HolsterStomachAction", "Holsters", "Stomach presses", Kind::Choice, 2.0f, 0.0f,
+    {"HolsterStomachAction", "Holsters", "Stomach presses", Kind::Choice, 3.0f, 0.0f,
      static_cast<float>(kHolsterActionCount - 1), 1.0f, 0, "", &HolsterActionLabel},
     {"HolsterHipAction", "Holsters", "Hip presses", Kind::Choice, 1.0f, 0.0f, static_cast<float>(kHolsterActionCount - 1),
      1.0f, 0, "", &HolsterActionLabel},
@@ -285,6 +297,10 @@ enum Index
     kShotOriginForward,
     kShotPitch,
     kShotYaw,
+    kFlashlightMount,
+    kFlashlightRight,
+    kFlashlightUp,
+    kFlashlightForward,
     kHandRight,
     kHandUp,
     kHandForward,
@@ -381,9 +397,26 @@ constexpr ProfileDefault kSpeciesDefaults[] = {
     {"Predator", kHolsterActionFirst + 4, 0.0f}, {"Alien", kHolsterActionFirst + 0, 0.0f},
     {"Alien", kHolsterActionFirst + 1, 0.0f},    {"Alien", kHolsterActionFirst + 2, 0.0f},
     {"Alien", kHolsterActionFirst + 3, 0.0f},    {"Alien", kHolsterActionFirst + 4, 0.0f},
+    // Their holster heights (the stomach, hip and chest: the entries' are the Marine's).
+    {"Predator", kHolsterPosFirst + 1, -55.0f},  {"Predator", kHolsterPosFirst + 4, -78.0f},
+    {"Predator", kHolsterPosFirst + 7, -33.0f},  {"Alien", kHolsterPosFirst + 1, -55.0f},
+    {"Alien", kHolsterPosFirst + 4, -78.0f},     {"Alien", kHolsterPosFirst + 7, -33.0f},
+    {"Predator", kLaserSight, 1.0f},             {"Alien", kLaserSight, 1.0f},
+    {"Alien", kRoomScaleStep, 1.0f},             {"Alien", kElbowFollowRoll, 0.5f},
+    {"Alien", kElbowInKnee, 30.0f},              {"Alien", kElbowInMax, 60.0f},
+    {"Alien", kElbowInNearBody, 0.25f},          {"Alien", kElbowOutKnee, 60.0f},
+    {"Alien", kElbowOutMax, 110.0f},             {"Alien", kElbowSmoothingMs, 80.0f},
+    {"Alien", kLayerAnimation, 1.0f},
 };
 constexpr ProfileDefault kWeaponDefaults[] = {
-    {"m10_2305_197", kShotOriginRight, -0.6f},
+    {"m10_2305_197", kShotOriginRight, -0.6f}, // the pistol
+    {"m10_2305_197", kMuzzleFlashUp, -2.4f},
+    {"m10_2305_197", kMuzzleFlashForward, 16.5f},
+    {"m8_2693_284", kMuzzleFlashRight, -0.6f}, // the pulse rifle
+    {"m8_2693_284", kMuzzleFlashUp, -1.0f},
+    {"m8_2693_284", kMuzzleFlashForward, 44.0f},
+    {"m13_3130_690", kMuzzleFlashUp, 3.0f},
+    {"m13_3130_690", kMuzzleFlashForward, 50.0f},
 };
 
 Profile& ProfileFor(ProfileSet& s, const std::string& key)
@@ -468,8 +501,8 @@ bool VisibleFor(int index)
     const char* group = kEntries[index].group;
     if (index == kHideDuplicateTracker || index == kHideMarineReticle || index == kStomachTurn)
         return marine; // the motion tracker, the reticle hide, the Marine's torso bones
-    if (std::strcmp(group, "Weapon") == 0 || std::strcmp(group, "Aiming") == 0)
-        return marine; // the guns
+    if (std::strcmp(group, "Weapon") == 0 || std::strcmp(group, "Aiming") == 0 || std::strcmp(group, "Flashlight") == 0)
+        return marine; // the guns, the flashlight
     if (index > kElbowRollModel && index <= kElbowSmoothingMs)
         return (marine || predator) && g_values[kElbowRollModel].load(std::memory_order_relaxed) != 0.0f;
     if (index == kElbowSwivel) // the natural model's zero is the elbow down: the swivel is the plain IK's
@@ -737,6 +770,12 @@ void ShoulderOffset(int hand, float off[3])
     const int first = hand ? kRightShoulderOutward : kLeftShoulderOutward;
     for (int i = 0; i < 3; ++i)
         off[i] = g_values[first + i].load(std::memory_order_relaxed) * 0.01f; // the settings are centimetres
+}
+int FlashlightMount() { return static_cast<int>(g_values[kFlashlightMount].load(std::memory_order_relaxed)); }
+void FlashlightOffset(float off[3])
+{
+    for (int i = 0; i < 3; ++i)
+        off[i] = g_values[kFlashlightRight + i].load(std::memory_order_relaxed) * 0.01f; // the settings are centimetres
 }
 bool Holsters() { return g_values[kHolsters].load(std::memory_order_relaxed) != 0.0f; }
 bool HolsterGrabHand() { return g_values[kHolsterGrabHand].load(std::memory_order_relaxed) != 0.0f; }
