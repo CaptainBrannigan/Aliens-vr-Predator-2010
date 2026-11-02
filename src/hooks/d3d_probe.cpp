@@ -15,6 +15,7 @@
 #include <d3d11.h>
 #include <intrin.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <thread>
@@ -731,29 +732,187 @@ void EndGuiFrame()
     g_guiDrawsThisFrame = 0;
 }
 
-// ---- What one eye drew and the other didn't (left-eye-only effects; game render and right eye's) ----
-uint32_t g_eyeDraws[2][kHudPassCount + 1] = {}, g_eyeIndices[2][kHudPassCount + 1] = {};
-
-// After the right eye's render: the two renders' passes compared, a line per pass that differs (at most once a second).
-// A little difference in the 3D passes is normal (each eye culls for itself).
-void CompareEyes()
+// ---- What one eye drew and the other didn't (left-eye-only effects such as blood; game render vs the right eye's) ----
+// Each eye render's draws as (pass, index count, PS texture 0). After the right eye's render the two lists are matched
+// up and what's left over is logged: each kind once, when first seen, and how often each came up in a summary every
+// 30 s. A draw found in both eyes with a different texture is logged as that. (2026-11-02: the per-pass counts this
+// replaces hit their 400-line cap within minutes, on a pair of left-only quads present every frame.) Each eye culls
+// for itself, so a few one-eye draws in the 3D passes are normal.
+constexpr int kEyeDrawMax = 4096;
+constexpr int kEyeKindMax = 512;
+constexpr int kEyeSummaryLines = 16;
+constexpr DWORD kEyeSummaryMs = 30000;
+struct EyeDraw
 {
-    static DWORD lastLog = 0;
-    static int logs = 0;
-    const DWORD now = GetTickCount();
-    const bool log = logs < 400 && now - lastLog >= 1000;
-    for (int p = 0; p <= kHudPassCount; ++p)
+    uint32_t pass, count;
+    ID3D11ShaderResourceView* srv; // a reference held until CompareEyes
+};
+EyeDraw g_eyeDraws[2][kEyeDrawMax];
+int g_eyeDrawCount[2] = {};
+ID3D11ShaderResourceView* g_srv0 = nullptr; // PS slot 0 as last bound (Hook_PSSetShaderResources), compared only
+
+enum EyeSide : uint32_t
+{
+    kLeftOnly,
+    kRightOnly,
+    kTextureDiffers,
+};
+struct EyeKind
+{
+    uint32_t side, pass, count;
+    uintptr_t srv;          // left's, or the only one's
+    uint32_t frames;        // since the last summary
+};
+EyeKind g_eyeKinds[kEyeKindMax];
+int g_eyeKindCount = 0;
+
+void NoteEyeDraw(uint32_t pass, uint32_t count)
+{
+    const int eye = g_secondRender ? 1 : 0;
+    if (g_eyeDrawCount[eye] >= kEyeDrawMax)
+        return;
+    if (g_srv0)
+        g_srv0->AddRef(); // bound right now, so alive
+    g_eyeDraws[eye][g_eyeDrawCount[eye]++] = {pass, count, g_srv0};
+}
+
+bool EyeDrawLess(const EyeDraw& a, const EyeDraw& b)
+{
+    if (a.pass != b.pass)
+        return a.pass < b.pass;
+    if (a.count != b.count)
+        return a.count < b.count;
+    return reinterpret_cast<uintptr_t>(a.srv) < reinterpret_cast<uintptr_t>(b.srv);
+}
+
+void TextureText(ID3D11ShaderResourceView* v, char* out, size_t n)
+{
+    _snprintf_s(out, n, _TRUNCATE, "none");
+    if (!v)
+        return;
+    ID3D11Resource* res = nullptr;
+    v->GetResource(&res);
+    ID3D11Texture2D* t = nullptr;
+    if (res && SUCCEEDED(res->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&t))) && t)
     {
-        if (log && (g_eyeDraws[0][p] != g_eyeDraws[1][p] || g_eyeIndices[0][p] != g_eyeIndices[1][p]))
+        D3D11_TEXTURE2D_DESC d{};
+        t->GetDesc(&d);
+        _snprintf_s(out, n, _TRUNCATE, "%ux%u format %u (%p)", d.Width, d.Height, d.Format, v);
+        t->Release();
+    }
+    else
+        _snprintf_s(out, n, _TRUNCATE, "not 2D (%p)", v);
+    if (res)
+        res->Release();
+}
+
+const char* EyeSideName(uint32_t side)
+{
+    return side == kLeftOnly ? "left eye only" : side == kRightOnly ? "right eye only" : "both eyes, textures differ";
+}
+
+void NoteEyeKind(uint32_t side, const EyeDraw& d, const EyeDraw* other)
+{
+    const uintptr_t srv = reinterpret_cast<uintptr_t>(d.srv);
+    for (int i = 0; i < g_eyeKindCount; ++i)
+    {
+        EyeKind& k = g_eyeKinds[i];
+        if (k.side == side && k.pass == d.pass && k.count == d.count && k.srv == srv)
         {
-            lastLog = now;
-            ++logs;
-            AVP_LOG(kLog, "eyes differ: pass '%s': left %u draws %u indices, right %u draws %u indices", HudPassLabel(p),
-                    g_eyeDraws[0][p], g_eyeIndices[0][p], g_eyeDraws[1][p], g_eyeIndices[1][p]);
+            ++k.frames;
+            return;
         }
     }
-    std::memset(g_eyeDraws, 0, sizeof(g_eyeDraws));
-    std::memset(g_eyeIndices, 0, sizeof(g_eyeIndices));
+    if (g_eyeKindCount >= kEyeKindMax)
+    {
+        static bool full = false;
+        if (!full)
+            AVP_LOG(kLog, "one-eye draws: %d kinds seen, no more are tracked", kEyeKindMax);
+        full = true;
+        return;
+    }
+    g_eyeKinds[g_eyeKindCount++] = {side, d.pass, d.count, srv, 1};
+    char tex[96], tex2[96];
+    TextureText(d.srv, tex, sizeof(tex));
+    if (other)
+    {
+        TextureText(other->srv, tex2, sizeof(tex2));
+        AVP_LOG(kLog, "one-eye draw (new): %s, pass '%s', %u indices: left texture %s, right %s", EyeSideName(side),
+                HudPassLabel(static_cast<int>(d.pass)), d.count, tex, tex2);
+    }
+    else
+        AVP_LOG(kLog, "one-eye draw (new): %s, pass '%s', %u indices, texture %s", EyeSideName(side),
+                HudPassLabel(static_cast<int>(d.pass)), d.count, tex);
+}
+
+// After the right eye's render.
+void CompareEyes()
+{
+    static int unmatched[2][kEyeDrawMax];
+    int unmatchedCount[2] = {};
+    for (int e = 0; e < 2; ++e)
+        std::sort(g_eyeDraws[e], g_eyeDraws[e] + g_eyeDrawCount[e], EyeDrawLess);
+    int i = 0, j = 0;
+    while (i < g_eyeDrawCount[0] || j < g_eyeDrawCount[1])
+    {
+        if (j >= g_eyeDrawCount[1] || (i < g_eyeDrawCount[0] && EyeDrawLess(g_eyeDraws[0][i], g_eyeDraws[1][j])))
+            unmatched[0][unmatchedCount[0]++] = i++;
+        else if (i >= g_eyeDrawCount[0] || EyeDrawLess(g_eyeDraws[1][j], g_eyeDraws[0][i]))
+            unmatched[1][unmatchedCount[1]++] = j++;
+        else
+            ++i, ++j;
+    }
+    // The same draw in both eyes with another texture (pass and size alike), else one eye's alone.
+    static bool paired[kEyeDrawMax];
+    std::memset(paired, 0, sizeof(bool) * unmatchedCount[1]);
+    for (int a = 0; a < unmatchedCount[0]; ++a)
+    {
+        const EyeDraw& l = g_eyeDraws[0][unmatched[0][a]];
+        const EyeDraw* match = nullptr;
+        for (int b = 0; b < unmatchedCount[1] && !match; ++b)
+        {
+            const EyeDraw& r = g_eyeDraws[1][unmatched[1][b]];
+            if (!paired[b] && r.pass == l.pass && r.count == l.count)
+            {
+                paired[b] = true;
+                match = &r;
+            }
+        }
+        NoteEyeKind(match ? kTextureDiffers : kLeftOnly, l, match);
+    }
+    for (int b = 0; b < unmatchedCount[1]; ++b)
+        if (!paired[b])
+            NoteEyeKind(kRightOnly, g_eyeDraws[1][unmatched[1][b]], nullptr);
+
+    static DWORD lastSummary = GetTickCount();
+    static uint32_t frames = 0;
+    ++frames;
+    const DWORD now = GetTickCount();
+    if (now - lastSummary >= kEyeSummaryMs)
+    {
+        lastSummary = now;
+        int lines = 0, kinds = 0;
+        for (int k = 0; k < g_eyeKindCount; ++k)
+            kinds += g_eyeKinds[k].frames ? 1 : 0;
+        if (kinds)
+            AVP_LOG(kLog, "one-eye draws, last 30 s (%u frames compared): %d kind(s)", frames, kinds);
+        for (int k = 0; k < g_eyeKindCount; ++k)
+        {
+            EyeKind& e = g_eyeKinds[k];
+            if (e.frames && lines++ < kEyeSummaryLines)
+                AVP_LOG(kLog, "  %s, pass '%s', %u indices, texture %p: %u times", EyeSideName(e.side),
+                        HudPassLabel(static_cast<int>(e.pass)), e.count, reinterpret_cast<void*>(e.srv), e.frames);
+            e.frames = 0;
+        }
+        frames = 0;
+    }
+    for (int e = 0; e < 2; ++e)
+    {
+        for (int k = 0; k < g_eyeDrawCount[e]; ++k)
+            if (g_eyeDraws[e][k].srv)
+                g_eyeDraws[e][k].srv->Release();
+        g_eyeDrawCount[e] = 0;
+    }
 }
 
 bool HudBeforeDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count, UINT start, INT base)
@@ -776,8 +935,8 @@ bool HudBeforeDraw(ID3D11DeviceContext* c, uintptr_t esp, UINT count, UINT start
     }
     const int pass = inEye ? CurrentHudPass(esp) : -1;
     const int passKey = pass >= 0 ? pass : kHidePassUnlisted;
-    ++g_eyeDraws[g_secondRender ? 1 : 0][passKey];
-    g_eyeIndices[g_secondRender ? 1 : 0][passKey] += count;
+    if (inEye)
+        NoteEyeDraw(static_cast<uint32_t>(passKey), count);
     if (passKey != g_curPass)
     {
         g_curPass = passKey;
@@ -927,7 +1086,11 @@ void STDMETHODCALLTYPE Hook_PSSetShaderResources(ID3D11DeviceContext* c, UINT st
                                                  ID3D11ShaderResourceView* const* views)
 {
     g_realPSSetShaderResources(c, start, n, views);
-    if (!g_trackerSrvCount || reinterpret_cast<uintptr_t>(c) != Global<uintptr_t>(addr::g_D3DContext))
+    if (reinterpret_cast<uintptr_t>(c) != Global<uintptr_t>(addr::g_D3DContext))
+        return;
+    if (start == 0 && n > 0)
+        g_srv0 = views ? views[0] : nullptr; // for the one-eye draw log
+    if (!g_trackerSrvCount)
         return;
     for (UINT i = 0; i < n; ++i)
     {
