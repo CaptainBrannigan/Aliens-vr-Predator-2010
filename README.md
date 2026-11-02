@@ -21,6 +21,7 @@ what isn't done yet.
   Valve Index, Steam Frame, Pico, Vive (wands, Cosmos, Focus 3), HP Reverb G2 and Windows MR controllers get default
   bindings (Virtual Desktop included); others need a binding made in SteamVR.
 - `openvr_api.dll` (32-bit) from your SteamVR install.
+- Enable gamepad in game's settings (see [Known issues](#known-issues)).
 
 ## Installing
 
@@ -140,6 +141,9 @@ rows that don't apply to the species you're playing are hidden.
 
 ## Known issues
 
+- ** Motion controllers not detected. ** I have not received word that the latest fix is indeed patching this issue. But it stems
+  from the game not detecting a controller, and not allowing the "enable gamepad" setting to be turned on. A workaround reported by 
+  others is to launch in flatscreen with a controller connected to enable the setting.
 - **Default bindings other than Touch are new and untested on real hardware.** The hand calibration was tuned on Touch,
   so other controllers may need adjusting in "Hand placement" and the gun offsets.
 - **The Alien has no hands on the controllers yet**, and the Alien's and Predator's attacks are on buttons (grips,
