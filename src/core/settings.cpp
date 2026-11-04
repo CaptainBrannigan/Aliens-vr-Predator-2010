@@ -91,6 +91,8 @@ const Entry kEntries[] = {
      nullptr},
     {"TurnSpeed", "Controls", "Game look speed (head aim off)", Kind::Number, 1.0f, 0.2f, 3.0f, 0.05f, 2, "x",
      nullptr},
+    {"Rumble", "Controls", "Controller rumble (the game's)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
+    {"RumbleStrength", "Controls", "Rumble strength", Kind::Number, 1.0f, 0.1f, 1.0f, 0.05f, 2, "x", nullptr},
     {"HeadAim", "Head look", "Head aim (your head aims)", Kind::Toggle, 1.0f, 0, 0, 0, 0, "", nullptr},
     {"LookOffsetUp", "Head look", "Look up from the view", Kind::Number, -12.5f, -15.0f, 15.0f, 0.25f, 2,
      "deg", nullptr},
@@ -248,6 +250,8 @@ enum Index
     kTurnSpeedDeg,
     kStickFullDeflection,
     kTurnSpeed,
+    kRumble,
+    kRumbleStrength,
     kHeadAim,
     kLookOffsetUp,
     kLookOffsetRight,
@@ -326,6 +330,37 @@ enum Index
 
 std::atomic<float> g_values[kCount];
 std::mutex g_fileMutex;
+
+// GAME CONTROLLERS: two dashboard rows per game controller product DirectInput lists to the game (HidePadDevice), after
+// the table's rows: menu index kCount = the motion controllers' status, kCount + 1 + 2i = product i's status,
+// kCount + 2 + 2i = its hide toggle. Rows are written once before g_padRowCount counts them (the dashboard thread reads
+// the name unlocked); hide and state are the live values.
+constexpr int kPadDeviceRows = 8;
+struct PadDeviceRow
+{
+    char id[64];
+    char name[160];
+    std::atomic<bool> hide;
+    std::atomic<int> state; // PadDeviceState
+};
+const char* PadDeviceStateText(int state)
+{
+    switch (state)
+    {
+    case kPadSent: return "input sent to the game";
+    case kPadNotRead: return "not sent: another controller is read";
+    case kPadHidden: return "not sent: hidden";
+    default: return "not connected";
+    }
+}
+PadDeviceRow g_padRows[kPadDeviceRows];
+std::atomic<int> g_padRowCount{0};
+// Every product's saved choice, by id (HidePadProduct.<VIDPID>=0/1), including ones not connected this launch.
+// g_fileMutex.
+std::vector<std::pair<std::string, bool>> g_padSaved;
+std::atomic<bool> g_padChanged{false};
+constexpr int kPadInfoRow = kCount;
+constexpr int kMenuCount = kCount + 1 + 2 * kPadDeviceRows;
 
 // ---- Profiles: groups of entries whose values depend on what's being played -- the gun's placement and shot line
 // per weapon, the body and IK per species. The entries hold the CURRENT profile's values (what the dashboard shows and
@@ -594,6 +629,13 @@ void WriteFileLocked()
                 text += line;
             }
     }
+    if (!g_padSaved.empty())
+        text += "; game controllers hidden from the game in VR (1) or kept (0), by product (VID + PID)\r\n";
+    for (const auto& d : g_padSaved)
+    {
+        snprintf(line, sizeof(line), "HidePadProduct.%s=%d\r\n", d.first.c_str(), d.second ? 1 : 0);
+        text += line;
+    }
     // Raw Win32 like the logger (no CRT streams that could be mid-write at exit).
     HANDLE h = CreateFileA(FilePath().c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
                            FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -660,6 +702,11 @@ void Load()
                 snprintf(scaled, sizeof(scaled), "%.1f", atof(line.c_str() + eq + 1) * 100.0);
                 line = line.substr(0, eq + 1) + scaled;
             }
+        }
+        if (key.compare(0, 15, "HidePadProduct.") == 0)
+        {
+            g_padSaved.emplace_back(key.substr(15), atoi(line.c_str() + eq + 1) != 0);
+            continue;
         }
         std::string aimSpecies;
         const char* aimKey = nullptr;
@@ -757,6 +804,8 @@ void LookOffsetDeg(float* up, float* right)
 
 bool HeadAim() { return g_values[kHeadAim].load(std::memory_order_relaxed) != 0.0f; }
 float TurnSpeedDeg() { return g_values[kTurnSpeedDeg].load(std::memory_order_relaxed); }
+bool Rumble() { return g_values[kRumble].load(std::memory_order_relaxed) != 0.0f; }
+float RumbleStrength() { return g_values[kRumbleStrength].load(std::memory_order_relaxed); }
 float StickFullDeflection() { return g_values[kStickFullDeflection].load(std::memory_order_relaxed); }
 float TurnSpeed() { return g_values[kTurnSpeed].load(std::memory_order_relaxed); }
 
@@ -909,10 +958,108 @@ void SetCurrentSpecies(const char* key, const char* name)
     SwitchProfileLocked(g_speciesSet, key, name);
 }
 
-int MenuCount() { return kCount; }
+bool HidePadDevice(const char* id, const char* name)
+{
+    std::lock_guard<std::mutex> lock(g_fileMutex);
+    bool hide = true; // the default: in VR the motion controllers are the game's pad
+    bool saved = false;
+    for (const auto& d : g_padSaved)
+        if (d.first == id)
+        {
+            hide = d.second;
+            saved = true;
+        }
+    if (!saved)
+    {
+        g_padSaved.emplace_back(id, hide);
+        WriteFileLocked();
+    }
+    const int n = g_padRowCount.load(std::memory_order_acquire);
+    for (int i = 0; i < n; ++i)
+        if (std::strcmp(g_padRows[i].id, id) == 0)
+            return g_padRows[i].hide.load(std::memory_order_relaxed);
+    if (n < kPadDeviceRows)
+    {
+        PadDeviceRow& r = g_padRows[n];
+        snprintf(r.id, sizeof(r.id), "%s", id);
+        snprintf(r.name, sizeof(r.name), "%s", name);
+        r.hide.store(hide, std::memory_order_relaxed);
+        r.state.store(kPadNotConnected, std::memory_order_relaxed);
+        g_padRowCount.store(n + 1, std::memory_order_release);
+    }
+    return hide;
+}
+
+void SetPadDeviceState(const char* id, int state)
+{
+    const int n = g_padRowCount.load(std::memory_order_acquire);
+    for (int i = 0; i < n; ++i)
+        if (!id || std::strcmp(g_padRows[i].id, id) == 0)
+            g_padRows[i].state.store(state, std::memory_order_relaxed);
+}
+
+bool TakePadDevicesChanged() { return g_padChanged.exchange(false, std::memory_order_relaxed); }
+
+namespace {
+std::atomic<const char*> g_motionControllersStatus{"waiting for SteamVR"};
+// Two buffers: the dashboard thread reads the one published while the other is written.
+char g_motionControllersNames[2][128] = {"Motion controllers", ""};
+std::atomic<int> g_motionControllersName{0};
+}
+void SetMotionControllersStatus(const char* text) { g_motionControllersStatus.store(text, std::memory_order_relaxed); }
+
+void SetMotionControllersName(const char* name)
+{
+    const int current = g_motionControllersName.load(std::memory_order_acquire);
+    if (std::strcmp(g_motionControllersNames[current], name) == 0)
+        return;
+    const int next = 1 - current;
+    snprintf(g_motionControllersNames[next], sizeof(g_motionControllersNames[next]), "%s", name);
+    g_motionControllersName.store(next, std::memory_order_release);
+    AVP_LOG(kLog, "motion controllers: %s", name);
+}
+
+int MenuCount() { return kMenuCount; }
 
 bool GetMenu(int index, MenuInfo* out)
 {
+    if (index >= kCount && index < kMenuCount && out)
+    {
+        const int n = g_padRowCount.load(std::memory_order_acquire);
+        *out = MenuInfo{};
+        out->group = "Game controllers";
+        out->unit = "";
+        out->text = "";
+        if (index == kPadInfoRow)
+        {
+            out->label = g_motionControllersNames[g_motionControllersName.load(std::memory_order_acquire)];
+            out->isInfo = true;
+            out->text = g_motionControllersStatus.load(std::memory_order_relaxed);
+            return true;
+        }
+        const int row = (index - kPadInfoRow - 1) / 2;
+        const bool toggle = (index - kPadInfoRow - 1) % 2 == 1;
+        out->hidden = row >= n;
+        if (row >= n)
+        {
+            out->label = "";
+            return true;
+        }
+        const PadDeviceRow& r = g_padRows[row];
+        if (toggle)
+        {
+            out->label = "    Hide from the game in VR";
+            out->isToggle = true;
+            out->value = r.hide.load(std::memory_order_relaxed) ? 1.0f : 0.0f;
+        }
+        else
+        {
+            out->label = r.name;
+            out->isInfo = true;
+            out->text = PadDeviceStateText(r.state.load(std::memory_order_relaxed));
+        }
+        return true;
+    }
     if (index < 0 || index >= kCount || !out)
         return false;
     const Entry& e = kEntries[index];
@@ -935,6 +1082,23 @@ bool GetMenu(int index, MenuInfo* out)
 
 void AdjustMenu(int index, int steps)
 {
+    if (index > kPadInfoRow && index < kMenuCount && steps != 0)
+    {
+        const int row = (index - kPadInfoRow - 1) / 2;
+        if ((index - kPadInfoRow - 1) % 2 == 0 || row >= g_padRowCount.load(std::memory_order_acquire))
+            return; // a status row
+        PadDeviceRow& r = g_padRows[row];
+        const bool hide = !r.hide.load(std::memory_order_relaxed);
+        r.hide.store(hide, std::memory_order_relaxed);
+        AVP_LOG(kLog, "HidePadProduct.%s -> %d", r.id, hide ? 1 : 0);
+        std::lock_guard<std::mutex> lock(g_fileMutex);
+        for (auto& d : g_padSaved)
+            if (d.first == r.id)
+                d.second = hide;
+        g_padChanged.store(true, std::memory_order_relaxed);
+        WriteFileLocked();
+        return;
+    }
     if (index < 0 || index >= kCount || steps == 0)
         return;
     const Entry& e = kEntries[index];

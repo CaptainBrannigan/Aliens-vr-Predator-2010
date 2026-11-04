@@ -50,4 +50,8 @@ bool GetHandPose(int hand, bool palm, float m[3][4]);
 // A hand's grip is held (analog grip past 0.7, released below 0.4), from this frame's update. Any thread.
 bool GripHeld(int hand);
 
+// The game's rumble for this frame, its pad's two motors (0..1: low = the heavy one, high = the light one); Update
+// sends it to both controllers' haptics (settings "Controller rumble", "Rumble strength"). Any thread.
+void SetRumble(float low, float high);
+
 } // namespace avp::input

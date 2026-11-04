@@ -3,6 +3,7 @@
 #include "stereo.h"
 #include "../core/log.h"
 #include "../core/settings.h"
+#include "../hooks/first_person.h"
 #include "holsters.h"
 
 #include <windows.h>
@@ -135,7 +136,9 @@ std::string BuildActionManifest()
     { "name": "/actions/main/in/GripLeft", "type": "vector1" },
     { "name": "/actions/main/in/Recenter", "type": "boolean" },
     { "name": "/actions/main/in/Move", "type": "vector2" },
-    { "name": "/actions/main/in/Turn", "type": "vector2" })";
+    { "name": "/actions/main/in/Turn", "type": "vector2" },
+    { "name": "/actions/main/out/HapticLeft", "type": "vibration" },
+    { "name": "/actions/main/out/HapticRight", "type": "vibration" })";
     for (const PadAction& a : kPadActions)
         s += ",\n    { \"name\": \"" + PadActionName(a) + "\", \"type\": \"boolean\" }";
     s += R"(
@@ -157,7 +160,9 @@ std::string BuildActionManifest()
       "/actions/main/in/GripLeft": "Grip - left hand: hold on the gun for two-handed aim",
       "/actions/main/in/Recenter": "Recenter view",
       "/actions/main/in/Move": "Gamepad: left stick, move",
-      "/actions/main/in/Turn": "Gamepad: right stick, look")";
+      "/actions/main/in/Turn": "Gamepad: right stick, look",
+      "/actions/main/out/HapticLeft": "Rumble - left hand",
+      "/actions/main/out/HapticRight": "Rumble - right hand")";
     for (const PadAction& a : kPadActions)
         s += ",\n      \"" + PadActionName(a) + "\": \"Gamepad: " + a.label + "\"";
     s += R"(
@@ -346,6 +351,10 @@ std::string BuildBindings(const ControllerProfile& c)
         { "output": "/actions/main/in/RightHandPalm", "path": "/user/hand/right/pose/)" + c.palmPose + R"(" },
         { "output": "/actions/main/in/LeftHandPalm", "path": "/user/hand/left/pose/)" + c.palmPose + R"(" }
       ],
+      "haptics": [
+        { "output": "/actions/main/out/HapticLeft", "path": "/user/hand/left/output/haptic" },
+        { "output": "/actions/main/out/HapticRight", "path": "/user/hand/right/output/haptic" }
+      ],
       "sources": [
 )";
     s += sources;
@@ -382,6 +391,8 @@ bool WriteTextFile(const std::string& path, const std::string& text)
 std::atomic<bool> g_gripHeld[2] = {}; // GripHeld, with hysteresis
 ::vr::VRActionHandle_t g_palm[2] = {::vr::k_ulInvalidActionHandle, ::vr::k_ulInvalidActionHandle}; // left, right
 ::vr::VRActionHandle_t g_aim[2] = {::vr::k_ulInvalidActionHandle, ::vr::k_ulInvalidActionHandle};
+::vr::VRActionHandle_t g_haptic[2] = {::vr::k_ulInvalidActionHandle, ::vr::k_ulInvalidActionHandle}; // left, right
+std::atomic<float> g_rumbleLow{0.0f}, g_rumbleHigh{0.0f}; // SetRumble
 ::vr::ETrackingUniverseOrigin g_universe = ::vr::TrackingUniverseStanding;
 
 // Hand poses for GetHandPose ([hand][palm 1 / aim 0]).
@@ -419,6 +430,49 @@ void LogControllers()
         g_system->GetStringTrackedDeviceProperty(i, ::vr::Prop_ModelNumber_String, model, sizeof(model));
         AVP_LOG(kLog, "controller %u: type '%s', model '%s'", i, type, model);
     }
+}
+
+// The dashboard's name for the motion controllers (settings::SetMotionControllersName): what the two hands' model
+// numbers share, "Oculus Quest3 (Left Controller)" + "(Right Controller)" -> "Oculus Quest3 controllers"; one hand
+// only: its model.
+void UpdateControllersName()
+{
+    if (!g_system)
+        return;
+    char model[2][128] = {};
+    const ::vr::ETrackedControllerRole roles[2] = {::vr::TrackedControllerRole_LeftHand,
+                                                   ::vr::TrackedControllerRole_RightHand};
+    for (int h = 0; h < 2; ++h)
+    {
+        const ::vr::TrackedDeviceIndex_t i = g_system->GetTrackedDeviceIndexForControllerRole(roles[h]);
+        if (i != ::vr::k_unTrackedDeviceIndexInvalid)
+            g_system->GetStringTrackedDeviceProperty(i, ::vr::Prop_ModelNumber_String, model[h], sizeof(model[h]));
+    }
+    std::string name;
+    if (model[0][0] && model[1][0])
+    {
+        size_t n = 0;
+        while (model[0][n] && model[0][n] == model[1][n])
+            ++n;
+        name.assign(model[0], n);
+        while (!name.empty() && (name.back() == ' ' || name.back() == '(' || name.back() == '-'))
+            name.pop_back();
+        if (name.empty())
+            name = model[1];
+    }
+    else
+        name = model[0][0] ? model[0] : model[1];
+    if (name.empty())
+        name = "Motion controllers";
+    else
+    {
+        std::string lower = name;
+        for (char& ch : lower)
+            ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
+        if (lower.find("controller") == std::string::npos)
+            name += " controllers";
+    }
+    settings::SetMotionControllersName(name.c_str());
 }
 
 float Analog1(::vr::VRActionHandle_t action)
@@ -523,6 +577,8 @@ void Init(::vr::IVRInput* input, ::vr::IVRSystem* system, int trackingUniverse)
     g_recenter = Handle("/actions/main/in/Recenter");
     g_grip[0] = Handle("/actions/main/in/GripLeft");
     g_grip[1] = Handle("/actions/main/in/GripRight");
+    g_haptic[0] = Handle("/actions/main/out/HapticLeft");
+    g_haptic[1] = Handle("/actions/main/out/HapticRight");
     for (int i = 0; i < kPadActionCount; ++i)
         g_pad[i] = Handle(PadActionName(kPadActions[i]).c_str());
     g_ready = g_mainSet != ::vr::k_ulInvalidActionSetHandle;
@@ -693,6 +749,46 @@ void Update()
         nextControllerLog = ~0ull;
         LogControllers();
     }
+    static ULONGLONG nextControllersName = 0;
+    if (now >= nextControllersName)
+    {
+        nextControllersName = now + 5000;
+        UpdateControllersName();
+    }
+
+    // Rumble: a pad's two motors, a slow heavy one and a fast light one, as one vibration -- its pitch between those
+    // two by their mix -- on the hand holding the weapon: the one that last took it from a holster by grip (also with
+    // the grip as a toggle; from startup the default hand, as if its grip were held -- holsters::LeftHandedNow), and
+    // the off hand while it grips the barrel (two-handed). A short pulse every frame, a little longer than one, so it
+    // runs on while the game keeps it up and stops within a few frames after. No haptics: no vibration.
+    const float low = g_rumbleLow.load(std::memory_order_relaxed);
+    const float high = g_rumbleHigh.load(std::memory_order_relaxed);
+    const float amplitude = (low > high ? low : high) * settings::RumbleStrength();
+    if (settings::Rumble() && amplitude > 0.01f)
+    {
+        constexpr float kLowHz = 80.0f, kHighHz = 200.0f, kPulseSeconds = 0.04f;
+        const float hz = (low * kLowHz + high * kHighHz) / (low + high);
+        const int weaponHand = holsters::LeftHandedNow() ? 0 : 1;
+        const bool offHandOnGun = fp::LeftGripOnGun() && GripHeld(1 - weaponHand);
+        for (int hand = 0; hand < 2; ++hand)
+            if (g_haptic[hand] != ::vr::k_ulInvalidActionHandle && (hand == weaponHand || offHandOnGun))
+                g_input->TriggerHapticVibrationAction(g_haptic[hand], 0.0f, kPulseSeconds, hz,
+                                                      amplitude > 1.0f ? 1.0f : amplitude,
+                                                      ::vr::k_ulInvalidInputValueHandle);
+        static ULONGLONG nextRumbleLog = 0;
+        if (now >= nextRumbleLog)
+        {
+            nextRumbleLog = now + 2000;
+            AVP_LOG(kLog, "rumble: low %.2f high %.2f -> amplitude %.2f at %.0f Hz, %s hand%s", low, high, amplitude, hz,
+                    weaponHand == 0 ? "left" : "right", offHandOnGun ? " + the off hand on the barrel" : "");
+        }
+    }
+}
+
+void SetRumble(float low, float high)
+{
+    g_rumbleLow.store(low, std::memory_order_relaxed);
+    g_rumbleHigh.store(high, std::memory_order_relaxed);
 }
 
 bool GripHeld(int hand) { return hand >= 0 && hand <= 1 && g_gripHeld[hand].load(std::memory_order_relaxed); }

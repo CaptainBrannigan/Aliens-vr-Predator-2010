@@ -17,6 +17,18 @@
 // brings it back by itself. That's the other half of the workaround: "setting controller to on in settings".
 // KeepGamePadEnabled turns the option on as well, with the game's own setter. The option gets saved as on.
 //
+// Nor are those two (2026-11-04, a Pico player: every button reached the hook, the game did nothing; only the mod's own
+// stick turn worked). The game binds pad buttons per device DirectInput lists to it, by its type (Xbox / PS3 / generic
+// layouts, Input_ClassifyPadName), and takes the last one listed as its pad: with no device listed, no pad button is
+// bound anywhere. So IDirectInput8A::EnumDevices is hooked inside dinput8.dll. Once the motion controllers run, the
+// game is made to list its devices again (the pad count it compares, set to one it hasn't seen); each device then
+// goes through or not by its "Game controllers" setting (all hidden by default: another device's layout would bind
+// the same button codes to other actions), and with none left the virtual pad is listed last, as an Xbox pad on
+// XInput pad 0. Before the controllers run (flat play) every device is listed as usual.
+//
+// The controller option is turned on only until the game shows the pad connected with the option on; after that it's
+// the player's for the session.
+//
 // Log: avpvr_xinput.log.
 
 namespace avp {
@@ -24,9 +36,9 @@ namespace avp {
 // Once at startup (InitializeMod, after MH_Initialize).
 bool InstallXInputHook();
 
-// Every frame on the game's main thread: while the controllers are running, keeps the game's pad enabled on XInput
-// pad 0 and its controller option on. The game's own device check clears the pad whenever the XInput pad count changes,
-// and a profile load with no pad clears the option; they then come straight back.
+// Every frame on the game's main thread: while the controllers are running, has the game list its devices again
+// (first time, and after a "Game controllers" change), enables its pad on XInput pad 0 if it lists nothing, and turns
+// its controller option on until the game reports the pad connected with it on.
 void KeepGamePadEnabled();
 
 } // namespace avp

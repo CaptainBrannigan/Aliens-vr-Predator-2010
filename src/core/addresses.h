@@ -34,6 +34,17 @@ constexpr uintptr_t Entity_TickCameraComponent   = 0x006FF350;
 constexpr uintptr_t Cinematic_ApplyCamera        = 0x0052A160;
 constexpr uintptr_t Cinematic_SetClipPlanes      = 0x00528220;
 constexpr uintptr_t CamShake_ApplyAllViews       = 0x0063E6B0;
+// Function pointer, data: bool __cdecl(shake, viewIndex), true = CamShake_ApplyAllViews skips that shake. The game sets
+// it to 00809220 (skip while the fly camera is on) in FUN_0080A1B0.
+constexpr uintptr_t g_CamShakeFilter             = 0x009FFEF0;
+// thiscall(shake, const float viewPos[3], float* falloff) -> bool: the shake reaches this view (distance falloff).
+constexpr uintptr_t CamShake_Falloff             = 0x0063E170; // RET 8
+// thiscall(shake, viewIndex, float rot[9] in/out, float falloff, float* low, float* high): this shake's turn of the
+// view, and its rumble added to the two motors (each clamped 0..1). No other writes.
+constexpr uintptr_t CamShake_Evaluate            = 0x0063E280; // RET 0x14
+// bool: the game rumbles at all. Frame_Update sets it every frame from 0081C880(profile control options): vibration
+// option (+0x02) and controller option (+0x0A) on, pad in use (g_PadInUse), and 00A71E1E / 00A71E22 not both set.
+constexpr uintptr_t g_RumbleOn                   = 0x009CF488;
 constexpr uintptr_t Cam_CopyFromObject           = 0x006F54D0;
 
 // ---- Render / D3D ----
@@ -159,10 +170,24 @@ constexpr uintptr_t XInput_SetRumble             = 0x00659FB0;
 constexpr uintptr_t XInput_EnablePad             = 0x00646320; // thiscall(pad, xinputIndex), RET 4
 constexpr uintptr_t g_Pad                        = 0x00A218B0; // the game's one pad object
 constexpr uintptr_t kPadXInputEnabled            = 0x244;      // bool: XInput_PollPad runs
+constexpr uintptr_t kPadXInputIndex              = 0x25C;      // int: the XInput pad it reads
 constexpr uintptr_t g_PadInUse                   = 0x009D4ADF; // bool, set by the game from enabled + connected
 constexpr uintptr_t Options_SetGamepad           = 0x00817260; // thiscall(controlOptions, bool), RET 4
 constexpr uintptr_t kProfileControlOptions       = 0xB4;       // g_PlayerProfile +: the control options
 constexpr uintptr_t kControlOptionGamepad        = 0x0A;       // control options +: bool, saved; off = pad input wiped
+// The game's pad device list, filled by IDirectInput8A::EnumDevices(game controllers) with Input_EnumPadDevice as the
+// callback; each call adds a 0x2C entry at the list's HEAD, so the last device listed is device 0 -- the game's pad
+// (Input_CheckPadDevices / FUN_006456e0). Each device's type also picks the button layout bound for it (menus
+// FUN_00656ec0, species controls FUN_0081F1E0 / FUN_00820980): with no device listed, no pad buttons are bound at all.
+constexpr uintptr_t Input_EnumPadDevice          = 0x00645750; // BOOL CALLBACK(const DIDEVICEINSTANCEA*, void*)
+constexpr uintptr_t g_PadDeviceList              = 0x00A20BCC; // pointer: [0] = head node {entry, prev, next}
+constexpr uintptr_t g_PadDeviceCount             = 0x00A20BC0; // int
+constexpr uintptr_t g_PadXInputCount             = 0x00A20BC4; // int: the next XInput index handed out
+constexpr uintptr_t g_PadCapsCount               = 0x00A72104; // int: XInput pads seen last check; a change re-lists
+constexpr uintptr_t kPadEntryGuidInstance        = 0x0C;       // GUID
+constexpr uintptr_t kPadEntryType                = 0x1C;       // int: Input_ClassifyPadName, 4 / 5 = Xbox layout
+constexpr uintptr_t kPadEntryIsXInput            = 0x24;       // bool (the game's WMI "IG_" check)
+constexpr uintptr_t kPadEntryXInputIndex         = 0x28;       // int: XInput_EnablePad's index
 
 // ---- Entities ----
 // thiscall(registry, handle, 1) -> entity, RET 8. The local player's entity = Find(g_EntityRegistry, *(g_GameScene + 8),

@@ -35,6 +35,8 @@ bool HeadAim();              // the head drives the player's look / aim (vr/head
 float TurnSpeedDeg();        // head aim's smooth turn, right stick fully deflected
 float StickFullDeflection(); // VR stick deflection that counts as full (they rarely reach 1.0)
 float TurnSpeed();           // right stick scale for the game's own look (head aim off)
+bool Rumble();               // the game's rumble on the controllers' haptics (vr_input SetRumble)
+float RumbleStrength();      // its scale, 0.1 .. 1
 
 bool GunOnRightController(); // Marine: the first-person weapon model on the right controller (hooks/first_person.h)
 // Its placement from the controller: off = right, up, forward (metres); angles = pitch (+ up), yaw (+ right), roll
@@ -105,6 +107,27 @@ bool DebugMeshProbe(); // log the first-person body pass's draws (hooks/first_pe
 bool DebugElbowLog();  // the elbow model logs both arms every frame (avpvr_fp.log)
 int DebugHidePass();   // index into kHudPasses (hooks/hud_passes.h) whose draws are skipped, kHidePassUnlisted, -1 = none
 int DebugHideDraw();   // only that pass's Nth draw (per eye render), 0 = all of them
+
+// ---- Game controllers (hooks/xinput_hook.cpp) ----
+// Each game controller product DirectInput lists to the game gets two dashboard rows (group "Game controllers"): its
+// name with whether its input reaches the game (SetPadDeviceState), and "Hide from the game in VR", on by default and
+// saved per product (id = VID + PID as hex: identical pads share the rows). Returns whether it's hidden. Game thread.
+bool HidePadDevice(const char* id, const char* name);
+enum PadDeviceState
+{
+    kPadNotConnected, // not in the game's last listing
+    kPadSent,         // the device the game reads
+    kPadNotRead,      // listed, but another device is the one read
+    kPadHidden,
+};
+// id = nullptr: every product (before a listing: kPadNotConnected).
+void SetPadDeviceState(const char* id, int state);
+// True once after the player changed one of those rows (the game is then made to list its devices again).
+bool TakePadDevicesChanged();
+// The group's first row, the motion controllers: whether their input reaches the game (text = a string literal), and
+// their name (SteamVR's model, copied; "Motion controllers" until known). Any thread; the name from one thread only.
+void SetMotionControllersStatus(const char* text);
+void SetMotionControllersName(const char* name);
 
 // ---- Dashboard menu ----
 struct MenuInfo

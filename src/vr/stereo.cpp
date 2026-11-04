@@ -856,12 +856,68 @@ bool HeadAnglesDeg(float out[3])
 
 bool StereoActive() { return g_lastStereoTick && GetTickCount() - g_lastStereoTick < 500; }
 
+namespace {
+// Camera shake (recoil, explosions, landings) is added by CamShake_ApplyAllViews after the camera apply, so
+// GameCameraBase off doesn't take it out by itself (2026-11-04: gunshot recoil stayed). The game's own shake filter
+// (g_CamShakeFilter, a data pointer) skips them all instead; the game's filter (the fly camera) still applies otherwise.
+using ShakeFilterFn = bool(__cdecl*)(void* shake, int viewIndex);
+ShakeFilterFn g_gameShakeFilter = nullptr;
+
+// Rumble comes from the same shakes (CamShake_ApplyAllViews -> XInput_SetRumble), so a filtered-out shake has none.
+// The filter works it out itself for the player's view, with the game's own functions on a scratch rotation:
+// CamShake_Falloff (0063E170, thiscall(shake, view position, &falloff) -> applies) and CamShake_Evaluate (0063E280,
+// thiscall(shake, view, rotation in/out, falloff, &low, &high): adds this shake to the two motors, 0..1). Main thread;
+// OnPresent hands each frame's total to the controllers.
+using ShakeFalloffFn = bool(__thiscall*)(void* shake, const float* viewPos, float* falloff);
+using ShakeEvaluateFn = void(__thiscall*)(void* shake, int viewIndex, float* rot, float falloff, float* low,
+                                          float* high);
+float g_rumbleLow = 0.0f, g_rumbleHigh = 0.0f;
+
+bool __cdecl ShakeFilter(void* shake, int viewIndex)
+{
+    if (viewIndex == 0)
+    {
+        const ViewCamera& view = ViewCameras()[0];
+        float falloff = 0.0f;
+        if (reinterpret_cast<ShakeFalloffFn>(addr::CamShake_Falloff)(shake, view.pos, &falloff))
+        {
+            float rot[9];
+            std::memcpy(rot, view.rot, sizeof(rot));
+            reinterpret_cast<ShakeEvaluateFn>(addr::CamShake_Evaluate)(shake, 0, rot, falloff, &g_rumbleLow,
+                                                                      &g_rumbleHigh);
+        }
+    }
+    if (vr::IsConnected() && !settings::GameCameraBase())
+        return true;
+    return g_gameShakeFilter && g_gameShakeFilter(shake, viewIndex);
+}
+
+// Every frame: the game sets its filter at init, possibly again later; ours goes back on top.
+void KeepShakeFilter()
+{
+    ShakeFilterFn& slot = Global<ShakeFilterFn>(addr::g_CamShakeFilter);
+    if (slot == &ShakeFilter)
+        return;
+    g_gameShakeFilter = slot;
+    slot = &ShakeFilter;
+    AVP_LOG(kLog, "camera shake filter in place (the game's: %p)", reinterpret_cast<void*>(g_gameShakeFilter));
+}
+} // namespace
+
 void OnPresent(IDXGISwapChain*, unsigned& syncInterval)
 {
     g_presentThread = GetCurrentThreadId();
     vr::TryConnect();
     if (!dev::kVrEnabled || !vr::IsConnected())
         return;
+    KeepShakeFilter();
+    // This frame's shakes (none: 0, the controllers stop). Only while the game itself would rumble (g_RumbleOn: its
+    // vibration and controller options, the pad in use), as XInput_SetRumble does.
+    if (Global<uint8_t>(addr::g_RumbleOn) != 0)
+        input::SetRumble(g_rumbleLow, g_rumbleHigh);
+    else
+        input::SetRumble(0.0f, 0.0f);
+    g_rumbleLow = g_rumbleHigh = 0.0f;
     syncInterval = 0; // WaitGetPoses paces the frame
     if (dev::kDiagRenderEverything)
         Global<uint8_t>(addr::cvar_RenderEverything) = 1;

@@ -21,7 +21,8 @@ what isn't done yet.
   Valve Index, Steam Frame, Pico, Vive (wands, Cosmos, Focus 3), HP Reverb G2 and Windows MR controllers get default
   bindings (Virtual Desktop included); others need a binding made in SteamVR.
 - `openvr_api.dll` (32-bit) from your SteamVR install.
-- Enable gamepad in game's settings (see [Known issues](#known-issues)).
+- Nothing to set in the game: the mod switches the game's controller option on at launch; after that it's yours to
+  change.
 
 ## Installing
 
@@ -98,6 +99,11 @@ To remove the mod, delete `dxgi.dll` from the game folder.
 - **Left-handed mode** (setting "Left-handed", off by default; one setting for all species): the arms play each
   other's animations mirrored, the Marine's whole upper body mirrors with them, its gun goes in your left hand, and the
   triggers and grips swap so your left hand fires. The gun itself isn't mirrored.
+- **Rumble:** the game's own rumble (gunfire, explosions, hits) on the hand holding the weapon -- the one that last
+  took it from a holster, or your main hand until then -- and on the off hand while it grips the barrel, on controllers
+  that have it
+  (settings "Controller rumble" and "Rumble strength"). It stays on with the camera shake turned off ("Keep the game
+  camera's motion"), and off whenever the game itself wouldn't rumble (its vibration or controller option off). A binding of your own saved in SteamVR needs the two Rumble actions bound to the hands' haptics.
 
 ### Controls (default bindings)
 
@@ -134,16 +140,22 @@ clicks and recenter is in the settings menu.
 ### Settings menu
 
 Open the SteamVR dashboard and pick the **AvP VR** tab. Every setting is there (nothing needs editing in the ini),
-grouped into View, HUD, Controls, Head look, Hands, Hand placement, Holsters, Weapon, Aiming and Flashlight, and changes apply and
+grouped into View, HUD, Controls, Head look, Hands, Hand placement, Holsters, Weapon, Aiming, Flashlight and Game
+controllers, and changes apply and
 save immediately. The page scrolls with the buttons at the top, or your stick if SteamVR passes it on. Settings are kept
 **per species**, switched automatically with the species you play, and the gun and shot values also **per weapon**;
 rows that don't apply to the species you're playing are hidden.
 
 ## Known issues
 
-- ** Motion controllers not detected. ** I have not received word that the latest fix is indeed patching this issue. But it stems
-  from the game not detecting a controller, and not allowing the "enable gamepad" setting to be turned on. A workaround reported by 
-  others is to launch in flatscreen with a controller connected to enable the setting.
+- **Motion controllers not reaching the game** (only turning works): the game binds pad buttons only to a controller
+  Windows lists to it, so a PC without an Xbox pad got none. The mod now lists the motion controllers to the game as an
+  Xbox pad once they're running. Not yet confirmed by a player who had the problem.
+- **Other game controllers are hidden from the game in VR** (DualShock, wheel, HOTAS, a real Xbox pad), since their
+  button layout would also be bound to the same buttons. The Game controllers group lists the motion controllers and
+  every controller Windows reports (Steam Input's virtual pads count as one), each with whether its input reaches the
+  game, and for each a "Hide from the game in VR" toggle: turn it off to have the game read that controller instead.
+  In flat play nothing is hidden.
 - **Default bindings other than Touch are new and untested on real hardware.** The hand calibration was tuned on Touch,
   so other controllers may need adjusting in "Hand placement" and the gun offsets.
 - **The Alien has no hands on the controllers yet**, and the Alien's and Predator's attacks are on buttons (grips,
@@ -157,7 +169,6 @@ rows that don't apply to the species you're playing are hidden.
   look and aim isn't verified.
 - Predator vision modes and zoom haven't been checked in VR.
 - The laser sight shows through walls (no hit test).
-- No controller rumble yet.
 
 ## Planned
 
@@ -165,7 +176,6 @@ rows that don't apply to the species you're playing are hidden.
 - **Physical gestures:** swing your hands to attack (the Predator's wrist blades, the Alien's claws, the Marine's
   melee).
 - The Alien's hands on the controllers.
-- Controller rumble.
 
 ## Credits
 

@@ -225,6 +225,22 @@ That's what the live test answers.
   Hooking the `XInputGetState` IAT slot (`008BC444`) is the MOHW-style virtual-pad route.
 - `XInput_SetRumble` (`00659FB0`) is the only `XInputSetState` caller (driven by camera shake) — haptics hook.
 - DirectInput8 is also imported (`FUN_00644530`), for keyboard/mouse and DirectInput pads.
+- **Which pad the game uses, and which buttons it binds (static, 2026-11-04).** `IDirectInput8A::EnumDevices`(game
+  controllers) with `Input_EnumPadDevice` (`00645750`) as the callback fills `g_PadDeviceList` (`00A20BCC`): each
+  device gets a 0x2C entry (+0x0C instance GUID, +0x1C type from `Input_ClassifyPadName`, +0x24 "is XInput" from a WMI
+  "IG_" + VID/PID match on the product GUID, +0x28 XInput index), **inserted at the head**, so the last device listed
+  is device 0. `Input_CheckPadDevices` (`0081A800`) re-lists everything when the XInputGetCapabilities count differs
+  from `g_PadCapsCount` (`00A72104`), takes device 0 as the pad (`Input_SelectPadDevice` `006456E0`: XInput ->
+  `XInput_EnablePad`, else the DirectInput device), rebinds the menus and recreates the player's controller. The
+  bindings go **per listed device, by its type** (menus `00656EC0`, species controls `0081F1E0` / `00820980`): 3 =
+  PS3, 4 / 5 = Xbox, else a generic layout that puts other actions on the same button codes (`0x628..`). **With no
+  device listed, no pad button is bound at all**, even with the pad polled -- a PC without a real or virtual Xbox pad
+  (a Pico player, 2026-11-04: every button reached the hook, nothing happened in the game). The mod
+  (`hooks/xinput_hook.cpp`) hooks EnumDevices inside dinput8.dll: in VR it leaves out the devices hidden in its
+  settings and lists a virtual "XInput XBOX 360 Pad" last, then marks that entry XInput pad 0, type 5.
+  **Steam Input** lists up to 15 virtual pads ("Controller (XBOX 360 For Windows)", VID `28DE` PID `11FF`) even with no
+  pad connected -- why the game bound the pad on most players' PCs (the author's included) and not on one with Steam
+  Input off for the game. The mod's setting is per product, so they share one row.
 - `Input_PackActionBits` packs actions 0..32 into a bitmask; action **names are not in the exe** (data-driven,
   probably in the `.asr` archives).
 
@@ -434,7 +450,17 @@ VS / PS), 8-28 draws per frame, changing with what the HUD shows, and the reticl
 cvars: `AVP.HUD.ShowCrosshair` (`00A6694A`, written by `006AA920`) and `AVP.HUD.ShowWeaponAccuracy` (`00A6668D`, written
 by `0069C0B0`), now forced off instead of hiding a draw. The older "GUI draw 1" hide was hiding whichever batch was
 first. Camera shake: `CamShake_ApplyAllViews` (`0063E6B0`) runs in `Frame_Update` after the camera apply, so it only
-reaches view 0; the right eye takes view 0's rotation at Present.
+reaches view 0; the right eye takes view 0's rotation at Present. It skips a shake when the filter at `009FFEF0` (a
+data pointer, `bool __cdecl(shake, viewIndex)`, set by the game to `00809220` = fly camera on) returns true; with
+"Keep the game camera's motion" off, the mod's filter skips them all (gun recoil is a shake: GameCameraBase alone
+didn't take it out). **Rumble comes only from the shakes:** per shake, `CamShake_Falloff` (`0063E170`) and
+`CamShake_Evaluate` (`0063E280`) give the view's turn and add to the two motors, which go to `XInput_SetRumble` (the
+only `XInputSetState` caller; only for a pad flagged in `00A22BE8` = XInputGetCapabilities reports both motors,
+`FUN_00659D60`). Rumble is zeroed unless `009CF488` is set, which `Frame_Update` refreshes every frame from
+`0081C880(profile control options)`: option `+0x02` (vibration, presumably) and `+0x0A` (controller) on, `g_PadInUse`,
+and `00A71E1E` / `00A71E22` not both set. The mod's filter evaluates each shake for view 0 itself on a scratch rotation
+and sends the frame's total to the SteamVR haptics -- only while `009CF488` is set -- so rumble stays when the shake is
+skipped; the virtual pad reports both motors.
 
 **Pause / menus:** `Game_IsPausedWithMenu` (`0080A450`) is true for the in-game pause menu; VR shows those frames
 (and cinematics) on the flat virtual screen, with the game's own aspect.
