@@ -168,6 +168,7 @@ rows that don't apply to the species you're playing are hidden.
 - **Multiplayer** works a solo survival multiplayer gamemode, but hasn't been tested with a second player: what others see of your head-driven
   look and aim isn't verified.
 - Predator vision modes and zoom haven't been checked in VR.
+- Look objectives may have difficulty triggering due to a secondary "wide culling" calculation done to prevent pop in. Togglong that off in the settings should allow you to proceed.
 - The laser sight shows through walls (no hit test).
 
 ## Planned
